@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="../styles/app.css?v=0.5.8">
+</head>
+<body class="settings-body">
+  <div class="settings-card">
+    <h2>七牛云同步设置</h2>
+    <p class="hint">配置后内容会异步同步到七牛云对象存储；不配置则仅本地保存。</p>
+    <label>AccessKey (AK)<input id="ak" autocomplete="off"></label>
+    <label>SecretKey (SK)<input id="sk" type="password" autocomplete="off"></label>
+    <label>存储空间名称 (Bucket)<input id="bucket" autocomplete="off"></label>
+    <label>访问域名 (Domain)<input id="domain" placeholder="xxxx.clouddn.com" autocomplete="off"></label>
+    <label>区域 (Region)
+      <select id="region">
+        <option value="z0">华东 z0</option>
+        <option value="z1">华北 z1</option>
+        <option value="z2">华南 z2</option>
+        <option value="na0">北美 na0</option>
+        <option value="as0">东南亚 as0</option>
+      </select>
+    </label>
+    <button id="saveSettings">保存</button>
+    <div id="saved" class="saved-tip" hidden>已保存</div>
+    <p class="hint">打开方式：浏览器右上角扩展图标 → 右键 →「选项」。</p>
+  </div>
+  <script type="module" src="../pages/settings.js?v=0.5.8"></script>
+</body>
+</html>

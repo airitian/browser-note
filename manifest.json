@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "浏览器笔记",
+  "version": "0.5.8",
+  "description": "本地优先 + 七牛云同步的笔记扩展：可缩放窗口 + 云端文章阅读",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": [
+    "https://*.qiniup.com/*",
+    "http://tmycvi0la.hn-bkt.clouddn.com/*",
+    "https://rsf.qiniuapi.com/*",
+    "http://tmralw2m1.hn-bkt.clouddn.com/*"
+  ],
+  "action": {
+    "default_title": "浏览器笔记（点击打开窗口）"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_page": "pages/settings.html"
+}

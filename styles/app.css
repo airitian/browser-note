@@ -1,0 +1,412 @@
+* { box-sizing: border-box; }
+
+/* hidden 属性必须永远生效：作者样式默认会压过 UA 的 [hidden] 规则（灯箱黑屏事故根因） */
+[hidden] { display: none !important; }
+
+/* 配色写死浅色：所有背景显式声明，不依赖浏览器默认画布 */
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #2C2C2A;
+  background: #FFFFFF;
+  font-size: 13px;
+}
+
+body.app-body { background: #FBFAF8; }
+
+.app { display: flex; height: 100vh; }
+
+/* popup 小窗：600×400，锚定在工具栏右上（Chrome 按 body 尺寸确定弹窗大小） */
+body.app-body { width: 600px; height: 400px; }
+/* 大窗编辑：独立窗口，填满窗口，可拖拽调整 */
+body.app-body.standalone { width: 100vw; height: 100vh; }
+
+.sidebar {
+  width: 46px;
+  flex: none;
+  background: #F7F6F2;
+  border-right: 0.5px solid #E2E0DA;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 搜索移到工具栏，避免被过窄侧栏挤压 */
+.search-input {
+  width: 120px;
+  border: 0.5px solid #D3D1C7;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  background: #fff;
+  outline: none;
+  flex: none;
+}
+
+.note-list { flex: 1; width: 100%; overflow-y: auto; padding: 6px 2px; }
+.note-item {
+  padding: 10px 0;
+  text-align: center;
+  border-left: 3px solid transparent;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+  margin: 2px 0;
+  font-weight: 500;
+  font-size: 13px;
+}
+.note-item:hover { background: #ECEAE4; }
+.note-item.active { background: #FAECE7; border-left-color: #D85A30; }
+.ni-title {
+  font-weight: 500;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ni-time { font-size: 11px; color: #888780; margin-top: 2px; }
+
+.new-btn {
+  align-self: center;
+  width: 30px;
+  height: 30px;
+  margin: 10px 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #185FA5;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+.new-btn:hover { background: #134C86; }
+.new-btn:active { transform: scale(0.92); }
+
+.editor-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+  background: #FFFFFF;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 0.5px solid #E2E0DA;
+  background: #FFFFFF;
+}
+
+.title-input {
+  font-size: 20px;
+  font-weight: 500;
+  border: none;
+  outline: none;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+}
+
+.status {
+  font-size: 12px;
+  color: #888780;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #F1EFE8;
+  white-space: nowrap;
+}
+.status.synced { color: #0F6E56; background: #E1F5EE; }
+.status.syncing { color: #854F0B; background: #FAEEDA; }
+.status.error { color: #A32D2D; background: #FCEBEB; }
+
+/* 版本号：确认扩展是否重新加载的肉眼可验标记 */
+.ver {
+  font-size: 11px;
+  color: #B4B2A9;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.tool-btn, .save-btn, .menu-btn {
+  border: 0.5px solid #D3D1C7;
+  background: #fff;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.save-btn { border-color: #B4B2A9; }
+.menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  padding: 5px;
+  color: #185FA5;
+  border-color: #185FA5;
+}
+.tool-btn:hover, .save-btn:hover, .menu-btn:hover { background: #F1EFE8; }
+.article-btn { display: inline-flex; align-items: center; gap: 5px; color: #185FA5; white-space: nowrap; }
+.code-btn { display: flex; align-items: center; justify-content: center; width: 30px; padding: 5px; color: #185FA5; border-color: #185FA5; }
+
+.menu {
+  position: absolute;
+  top: 48px;
+  right: 14px;
+  background: #fff;
+  border: 0.5px solid #D3D1C7;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  padding: 6px;
+  z-index: 10;
+  min-width: 200px;
+}
+.menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.menu button:hover { background: #F1EFE8; }
+.menu-sep { height: 0.5px; background: #E2E0DA; margin: 4px 0; }
+.menu-info { font-size: 11px; color: #888780; padding: 6px 10px; }
+
+.menu-log {
+  position: absolute;
+  top: 48px;
+  right: 14px;
+  width: 320px;
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+  background: #fff;
+  border: 0.5px solid #D3D1C7;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  padding: 8px;
+  z-index: 20;
+}
+.log-item { padding: 6px 4px; border-bottom: 0.5px solid #F1EFE8; font-size: 12px; }
+.log-item:last-child { border-bottom: none; }
+.log-action { color: #185FA5; font-weight: 500; }
+.log-title { display: block; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-time { color: #888780; font-size: 11px; margin-top: 2px; }
+.log-empty, .log-loading { color: #888780; font-size: 12px; padding: 8px; }
+
+.editor {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  outline: none;
+  line-height: 1.7;
+  isolation: isolate;
+}
+
+/* 兜底：编辑区内禁止定位浮层（防外来内容盖住窗口），图片限制在编辑区内 */
+.editor * { position: static !important; z-index: auto !important; }
+/* 编辑器内图片：缩略图尺寸由行内 NOTE_IMG_STYLE 决定。此处去掉 sizing 的 !important，
+   让行内 200px 缩略图能生效；max-* 保留（无 !important）作无行内样式时的兜底。
+   防浮层底线 .editor * 的 !important 不动 */
+.editor img {
+  max-width: 100%;
+  max-height: 60vh;
+  height: auto;
+  display: block;
+  margin: 8px 0;
+}
+
+/* 笔记内图片可点击查看的视觉提示 */
+.editor img { cursor: zoom-in; border-radius: 4px; }
+
+/* 代码/JSON 块（编辑器内）：等宽 + 保留格式 + 浅色底，横向可滚动 */
+.editor pre {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: #F7F6F2;
+  border: 0.5px solid #E2E0DA;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  overflow-x: auto;
+  white-space: pre;
+  tab-size: 2;
+}
+.editor pre code { font: inherit; background: none; padding: 0; color: inherit; }
+/* JSON 语法高亮配色（span 的 j-* 类名由 sanitizeContent 在 pre/code 内保留） */
+.editor pre .j-key  { color: #8757C8; }
+.editor pre .j-str  { color: #2E7D32; }
+.editor pre .j-num  { color: #B26A00; }
+.editor pre .j-bool { color: #185FA5; }
+.editor pre .j-null { color: #A84A38; }
+.editor pre .j-punc { color: #9C9A90; }
+
+/* 图片加载失败的友好占位 */
+.img-fallback {
+  display: inline-block;
+  margin: 8px 0;
+  padding: 10px 14px;
+  border: 0.5px dashed #D3D1C7;
+  border-radius: 6px;
+  background: #F7F6F2;
+  color: #888780;
+  font-size: 12px;
+  cursor: pointer;
+}
+.img-fallback:hover { background: #ECEAE4; color: #5F5E5A; }
+
+/* ===== 文章阅读面板（覆盖在编辑区上，自带返回/刷新）===== */
+.articles-pane {
+  position: absolute;
+  inset: 0;
+  background: #FFFFFF;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.articles-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 0.5px solid #E2E0DA;
+  background: #FFFFFF;
+  flex: none;
+}
+.articles-title { font-size: 15px; font-weight: 600; flex: 1; }
+.article-list { flex: 1; overflow-y: auto; padding: 8px 12px; }
+.article-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 0.5px solid transparent;
+}
+.article-item:hover { background: #F7F6F2; border-color: #E2E0DA; }
+.article-item-title { font-size: 13px; font-weight: 500; }
+.article-item-time { font-size: 11px; color: #888780; margin-top: 3px; }
+.article-empty { color: #888780; font-size: 12px; padding: 24px 12px; text-align: center; line-height: 1.9; }
+.article-tip { font-size: 11px; color: #B4B2A9; }
+
+.article-reader {
+  position: absolute;
+  inset: 0;
+  background: #FFFFFF;
+  z-index: 16;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.article-reader-bar {
+  padding: 8px 12px;
+  border-bottom: 0.5px solid #E2E0DA;
+  flex: none;
+}
+.article-reader-body { flex: 1; overflow-y: auto; padding: 16px 22px 32px; }
+.article-title { font-size: 20px; margin: 0 0 4px; }
+.article-meta { font-size: 11px; color: #888780; margin-bottom: 14px; }
+.article-content { font-size: 13px; line-height: 1.8; word-break: break-word; }
+.article-content h1 { font-size: 18px; margin: 18px 0 8px; }
+.article-content h2 { font-size: 16px; margin: 16px 0 8px; }
+.article-content h3 { font-size: 14px; margin: 14px 0 6px; }
+.article-content p { margin: 8px 0; }
+.article-content pre {
+  background: #F7F6F2;
+  border: 0.5px solid #E2E0DA;
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+.article-content code {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+  background: #F1EFE8;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.article-content pre code { background: none; padding: 0; }
+.article-content blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid #D85A30;
+  background: #FBFAF8;
+  color: #5F5E5A;
+}
+.article-content ul, .article-content ol { margin: 8px 0; padding-left: 22px; }
+.article-content li { margin: 3px 0; }
+.article-content hr { border: none; border-top: 0.5px solid #E2E0DA; margin: 14px 0; }
+.article-content a { color: #185FA5; }
+/* 文章内图片：跟随文章面板大小，可点击放大（灯箱由 JS 行内样式实现） */
+.article-content img {
+  max-width: 100% !important;
+  max-height: 60vh !important;
+  height: auto !important;
+  display: block;
+  margin: 8px 0;
+  border-radius: 4px;
+  cursor: zoom-in;
+}
+
+.chip {
+  background: #F1EFE8;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+}
+
+.settings-body {
+  background: #F1EFE8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
+.settings-card {
+  background: #fff;
+  border: 0.5px solid #E2E0DA;
+  border-radius: 12px;
+  padding: 24px;
+  width: 360px;
+}
+.settings-card h2 { margin: 0 0 4px; font-size: 16px; }
+.hint { font-size: 12px; color: #888780; margin: 0 0 16px; }
+.settings-card label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  color: #5F5E5A;
+  margin-bottom: 12px;
+  gap: 4px;
+}
+.settings-card input, .settings-card select {
+  border: 0.5px solid #D3D1C7;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  outline: none;
+}
+.settings-card button {
+  width: 100%;
+  border: none;
+  background: #185FA5;
+  color: #fff;
+  border-radius: 6px;
+  padding: 9px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.saved-tip { font-size: 12px; color: #0F6E56; text-align: center; margin-top: 8px; }

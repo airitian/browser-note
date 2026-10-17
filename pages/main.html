@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="../styles/app.css?v=0.5.8">
+</head>
+<body class="app-body">
+  <div class="app">
+    <aside class="sidebar">
+      <div class="note-list" id="noteList"></div>
+      <button class="new-btn" id="newBtn" title="新建笔记">+</button>
+    </aside>
+    <main class="editor-pane">
+      <div class="toolbar">
+        <input id="title" class="title-input" placeholder="无标题">
+        <input id="search" class="search-input" type="text" placeholder="搜索">
+        <span class="status" id="status">本地</span>
+        <span class="ver" id="ver" title="版本号，用于确认扩展是否已重新加载">v0.5.8</span>
+        <button class="tool-btn code-btn" id="codeBtn" title="插入代码/JSON 块：选中文字则转为代码块；直接粘贴 JSON 会自动美化+高亮">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        </button>
+        <button class="tool-btn article-btn" id="articleBtn" title="阅读文章（文章来源：七牛云）">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          文章
+        </button>
+        <button class="menu-btn" id="menuBtn" title="菜单">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <circle cx="3" cy="3" r="1.5"/><circle cx="8" cy="3" r="1.5"/><circle cx="13" cy="3" r="1.5"/>
+            <circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/>
+            <circle cx="3" cy="13" r="1.5"/><circle cx="8" cy="13" r="1.5"/><circle cx="13" cy="13" r="1.5"/>
+          </svg>
+        </button>
+        <button class="save-btn" id="saveBtn">保存</button>
+        <div class="menu" id="menu" hidden>
+          <button id="menuReset">重置窗口（600×400）</button>
+          <button id="menuRefresh">刷新（确保已保存）</button>
+          <button id="menuLog">变更记录</button>
+          <div class="menu-info" id="menuInfo">最近更新时间：-</div>
+        </div>
+        <div class="menu-log" id="menuLogPanel" hidden></div>
+      </div>
+      <div class="editor" id="editor" contenteditable="true" spellcheck="false"></div>
+      <!-- 文章阅读面板：列表（七牛 video2note 空间动态列举 .md）→ 阅读（Markdown 笔记） -->
+      <div class="articles-pane" id="articlesPane" hidden>
+        <div class="articles-head">
+          <button class="tool-btn" id="articlesBack" title="返回笔记">← 笔记</button>
+          <span class="articles-title">文章</span>
+          <button class="tool-btn" id="articlesRefresh" title="重新加载文章列表">⟳ 刷新</button>
+        </div>
+        <div class="article-list" id="articleList"></div>
+        <div class="article-reader" id="articleReader" hidden>
+          <div class="article-reader-bar">
+            <button class="tool-btn" id="readerBack" title="返回文章列表">← 文章列表</button>
+          </div>
+          <div class="article-reader-body">
+            <h1 class="article-title" id="articleTitle"></h1>
+            <div class="article-meta" id="articleMeta"></div>
+            <div class="article-content" id="articleContent"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="../pages/main.js?v=0.5.8.2"></script>
+</body>
+</html>

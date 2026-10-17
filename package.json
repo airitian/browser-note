@@ -1,0 +1,7 @@
+{
+  "name": "browser-note-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "本地优先 + 七牛云同步的 Chrome 笔记扩展（零构建原生 ESM）"
+}

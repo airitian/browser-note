@@ -1,0 +1,10 @@
+# 依赖与日志
+node_modules/
+*.log
+
+# 本地私有配置（含七牛 AK/SK，切勿入库）——模板见 lib/config.example.js
+lib/config.js
+secrets.dev.js
+
+# 工作目录数据（测试基建 / 私有记忆，不属于扩展本身）
+.workbuddy/
