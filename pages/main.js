@@ -2,7 +2,7 @@ import {
   listNotes, getNote, getNotes, upsertNote, getSettings, onNotesChanged,
 } from '../lib/storage.js';
 import { Editor, sanitizeContent, NOTE_IMG_STYLE } from '../lib/editor.js';
-import { scheduleSync, pullSync, pushAll, recordChange, fetchChangelog, maybeBackup, WIPE_STAMP } from '../lib/sync.js';
+import { scheduleSync, pullSync, pushAll, recordChange, fetchChangelog, maybeBackup } from '../lib/sync.js';
 import { fetchVideoNoteList, loadVideoNoteTitles, fetchVideoNote, renderArticleContent } from '../lib/articles.js';
 import { jsonBlockHtml, codeBlockHtml } from '../lib/codeblock.js';
 
@@ -615,21 +615,21 @@ onNotesChanged((newVal) => {
 (async () => {
   // 一次性彻底清空（v0.3.0 重置）：本地 + 云端全部数据，每个版本只执行一次。
   // 必须放在最前面——在任何同步/备份之前，防止旧数据被重新推上云。
-  // 执行权在 SW：页面只发消息触发并等待，不再本地直跑 oneTimeWipe——
+  // 执行权在 SW：页面只发消息、不再本地直跑 oneTimeWipe——
   // 页面与 SW 各持一个 sync.js 模块实例，两边同时跑会并发双清空、
   // 交叉 remove(['notes']) 把刚写入的笔记删掉（2026-10-17 修启动竞态）。
-  // P1 修复（读漏戳误清活数据）：先自查戳，已打戳（所有正常用户）则【根本不发消息】——
-  // 旧版每次页面加载都无条件发消息，SW 冷启动瞬时漏读戳就会误清当期数据；
-  // 只有本地确实没打过戳（如更新时断网致清空失败）才触发 SW 重试。
-  // SW 侧 runOneTimeWipe 另有漏读交叉验证 + 二次确认双保险（见 sync.js）。
+  // P1 修复（2026-10-18）：该消息已改为【只等待、不触发】——清空执行权收敛到
+  // onInstalled(update)/onStartup，页面加载不再触发清空（旧语义是漏戳误清的
+  // 放大面，QA 实证 1/5）；若在途清空刚好在进行，消息会等待其完成再返回
+  // （wipedNow 据此置位）；过期戳数据将存活到下次浏览器启动才清——宁可晚清，
+  // 不可误清。本页逻辑无需配合改动：wipedNow 与下方 resetStampAt<10min 的
+  // postWipe 判断在新语义下仍正确（等待中的清空完成会回 wiped:true；
+  // 更早完成的由 resetStampAt 兜底）。
   // 云端清理失败 / SW 无响应：整体跳过（本地不动），onStartup / 下次打开自动重试
   let wipedNow = false;
   try {
-    const stamp = await chrome.storage.local.get('resetStamp');
-    if (stamp.resetStamp !== WIPE_STAMP) {
-      const res = await chrome.runtime.sendMessage({ type: 'one-time-wipe' });
-      wipedNow = !!(res && res.wiped);
-    }
+    const res = await chrome.runtime.sendMessage({ type: 'one-time-wipe' });
+    wipedNow = !!(res && res.wiped);
   } catch (_) { /* 断网等情况：保持原样，下次重试 */ }
   await loadSettings();
   notesCache = await getNotes();

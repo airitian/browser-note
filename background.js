@@ -2,7 +2,7 @@
 // 说明：MV3 弹窗（default_popup）既不能手动缩放、也无法偏移位置，因此默认入口
 // 改为独立窗口（chrome.windows.create type=popup）：可自由拖拽调整，位置可编程控制。
 import { getSettings } from './lib/storage.js';
-import { backupRecent, pushAll, oneTimeWipe, WIPE_STAMP } from './lib/sync.js';
+import { backupRecent, pushAll, oneTimeWipe, awaitWipeIfRunning, WIPE_STAMP } from './lib/sync.js';
 
 const BIG_URL = chrome.runtime.getURL('pages/main.html?mode=window');
 const BOUNDS_KEY = 'windowBounds';
@@ -111,15 +111,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'flush-sync') {
     getSettings().then((s) => { if (s && s.ak) pushAll(s); }).catch(() => {});
   }
-  // 一次性清空执行权收口到 SW：页面启动时发消息触发并等待结果。
-  // 与 onInstalled(update)/onStartup 共享 sync.js 的 in-flight 守卫——清空进行中时
-  // 本调用直接挂到同一个 promise 上，不会二次执行。return true 保持消息通道，
-  // 云端清理耗时期间 SW 不被休眠杀掉；页面收到 { ok:false } 时按原样放行、下次重试
+  // 一次性清空（P1 修复后）：本消息【只等待、不触发】——清空执行权只保留在
+  // onInstalled(reason=update)/onStartup 两个 SW 生命周期事件，页面加载不再
+  // 触发清空。旧语义"页面加载即触发一次 wipe 检查"是漏戳误清的放大面：
+  // 任一次页面加载读漏即清空当期活数据（QA 实证重载页 1/5 概率）。
+  // 现有清空正在飞行中（onStartup 刚启动的）→ 挂到同一个 promise 上等它完成
+  // 再回结果（共享 sync.js 的 in-flight 守卫，不会二次执行）；没有 → 直接回
+  // {wiped:false}。两种情况都 return true 保持消息通道，云端清理耗时期间
+  // SW 不被休眠杀掉；页面收到 { ok:false } 时按原样放行、下次重试。
+  // 注意（有意为之的语义改变）：过期戳的数据将存活到下次浏览器启动
+  // （onStartup）才清——宁可晚清，不可误清（k-wipe-race B4 场景相应改变）
   if (msg.type === 'one-time-wipe') {
-    oneTimeWipe().then(
-      (wiped) => { try { sendResponse({ ok: true, wiped: !!wiped }); } catch (_) { /* 页面已关闭 */ } },
-      (e) => { try { sendResponse({ ok: false, error: String((e && e.message) || e) }); } catch (_) { /* 页面已关闭 */ } }
-    );
+    const running = awaitWipeIfRunning();
+    if (running) {
+      running.then(
+        (wiped) => { try { sendResponse({ ok: true, wiped: !!wiped, waited: true }); } catch (_) { /* 页面已关闭 */ } },
+        (e) => { try { sendResponse({ ok: false, error: String((e && e.message) || e) }); } catch (_) { /* 页面已关闭 */ } }
+      );
+    } else {
+      try { sendResponse({ ok: true, wiped: false, waited: false }); } catch (_) { /* 页面已关闭 */ }
+    }
     return true;
   }
 });
@@ -155,10 +166,13 @@ async function ensureAlarm() {
 // ===== 一次性彻底清空（v0.3.0 重置）：本地 + 云端全部数据 =====
 // 触发点 1：版本更新（reason=update）时自动执行——用户无感知，重载即生效
 // 触发点 2：每次浏览器启动（onStartup）兜底重试——防止 onInstalled 时断网导致清空失败
-// 触发点 3：弹窗/大窗启动时页面发 'one-time-wipe' 消息过来执行（见下方 onMessage）。
-//   页面自身不直跑 sync.js 的 oneTimeWipe——页面与 SW 各持一个模块实例，两边同时跑
-//   会并发双清空、交叉 remove(['notes']) 删掉刚写入的笔记（2026-10-17 修启动竞态）。
-//   三个触发点都收口到 SW 这一个执行者，靠 sync.js 的 in-flight 守卫保证串行。
+// （P1 修复 2026-10-18：触发入口已收敛，执行权只剩以上两个 SW 生命周期事件。）
+// 原触发点 3（页面加载发 'one-time-wipe' 消息触发）已改为【只等待、不触发】：
+//   历史演进——2026-10-17 修启动竞态：页面自身不直跑 sync.js 的 oneTimeWipe
+//   （页面与 SW 各持一个模块实例，同时跑会并发双清空、交叉 remove(['notes'])）；
+//   2026-10-18 修漏戳误清（P1）：页面加载触发清空的路径整个移除——任一次页面
+//   加载读漏戳即清空当期活数据（QA 实证 1/5），现由消息处理器等待在途清空
+//   （见 onMessage 处注释），过期戳数据存活到下次浏览器启动才清，宁可晚清不可误清。
 // 全新安装（reason=install）不清云端：保留云端数据，重装后可恢复
 chrome.runtime.onInstalled.addListener(async (details) => {
   ensureAlarm();
