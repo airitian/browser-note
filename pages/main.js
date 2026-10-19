@@ -352,7 +352,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.12';
+document.title = '浏览器笔记 v0.5.13';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden
@@ -665,15 +665,32 @@ onNotesChanged((newVal) => {
   // 先尝试从七牛恢复（即使本地被清空也能拉回），再决定是否新建空白笔记。
   // 网络类操作全部容错：同步/备份失败绝不能阻断 UI 初始化（本地优先）
   if (settings && settings.ak) {
-    try { await maybeBackup(settings); } catch (_) { /* 忽略：备份失败不阻塞启动 */ }
-    // 刚清空过的首次打开（本次刚清 / 10 分钟内被 SW 或另一入口清过）：跳过云端拉取。
+    // 拉取先行（跨浏览器数据安全）：「本地权威覆盖」语义下，没拉过就推会把云端
+    // 索引覆写成本地子集。启动时先拉取并落 lastPullAt，后续推送才放行
+    // （sync.js 的 ensurePulled 同款闸门把关 pushAll/scheduleSync）。
+    // 拉取可达（含云端无索引的 404）才落戳；网络失败不落，下次启动重试
+    // 刚清空过的首次打开（本次刚清 / 10 分钟内被 SW 或另一入口清过）仍跳过拉取：
     // 源头索引此时已为空，但七牛 CDN 边缘仍可能 Serve 陈旧副本——实测覆写后仍能
-    // 把已打成墓碑的笔记按旧内容拉回，导致"清了还有"。跳过本次拉取，下次打开再同步
-    const stampAt = (await chrome.storage.local.get('resetStampAt')).resetStampAt || 0;
-    const postWipe = wipedNow || Date.now() - stampAt < 10 * 60 * 1000;
-    if (!postWipe) {
-      try { await pullSync(settings, () => renderList($('search').value)); } catch (_) { /* 忽略：拉取失败不阻塞启动 */ }
-      notesCache = await getNotes();
+    // 把已打成墓碑的笔记按旧内容拉回，导致"清了还有"。但【从未拉取过】的浏览器
+    // （新装/换机）不在此列——它本地是空的，拉取只会带入数据、不可能复活旧数据，
+    // 这正是"换个浏览器数据拉不到"的修复点
+    let pulledOk = false; // 本浏览器是否已确认拉取过（决定能否写云端：备份等）
+    try {
+      const pulled = await chrome.storage.local.get('lastPullAt');
+      const stampAt = (await chrome.storage.local.get('resetStampAt')).resetStampAt || 0;
+      const postWipe = wipedNow || Date.now() - stampAt < 10 * 60 * 1000;
+      pulledOk = !pulled.lastPullAt || !postWipe ? false : true;
+      if (!pulled.lastPullAt || !postWipe) {
+        const st = await pullSync(settings, () => renderList($('search').value));
+        if (st !== 'error') { await chrome.storage.local.set({ lastPullAt: Date.now() }); pulledOk = true; }
+        notesCache = await getNotes();
+      }
+    } catch (_) { /* 忽略：拉取失败不阻塞启动 */ }
+    // 备份放在拉取之后，且仅在本浏览器已成功拉取过（pulledOk）时进行——
+    // 没拉取过的浏览器本地视图不完整，其备份会覆写云端更完整的当天备份。
+    // backupRecent/recordChange 内部另有同款 ensurePulled 闸门兜底 SW 定时路径
+    if (pulledOk) {
+      try { await maybeBackup(settings); } catch (_) { /* 忽略：备份失败不阻塞启动 */ }
     }
   }
   // 墓碑回收：清空/删除后可能从云端并入带 deleted 标记的空笔记，本地直接剔除
