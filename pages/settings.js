@@ -1,5 +1,5 @@
 import { getSettings, saveSettings } from '../lib/storage.js';
-import { pullSync, createSnapshot, listSnapshots, rollbackTo } from '../lib/sync.js';
+import { pullSync, createSnapshot, listSnapshots, rollbackTo, addPendingSnapshot } from '../lib/sync.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -28,7 +28,10 @@ function showSnapTip(text) {
   showSnapTip._t = setTimeout(() => { tip.hidden = true; }, 4000);
 }
 
-// 渲染快照列表（新→旧，最多 30 条）。无密钥/无快照/拉取失败都有明确空态
+// 渲染快照列表（新→旧，最多 30 条）。无密钥/无快照/拉取失败都有明确空态。
+// listSnapshots 已合并本地 pending（CDN 延迟期间刚建的快照）——这里只负责
+// 把 pending 条目标出来（「生效中」+ 回退按钮 title 说明），让用户知道
+// 它不是坏了，是云端 CDN 还在传播
 async function refreshSnapshots() {
   const box = $('snapList');
   const s = await getSettings();
@@ -44,6 +47,7 @@ async function refreshSnapshots() {
     box.innerHTML = '<p class="hint">暂无快照。每小时自动保存一份，也可点上方按钮立即创建。</p>';
     return;
   }
+  const pend = new Set((await chrome.storage.local.get('pendingSnapshots')).pendingSnapshots?.map((e) => e.at) || []);
   box.innerHTML = '';
   for (const e of list.slice(0, 30)) {
     const row = document.createElement('div');
@@ -56,6 +60,12 @@ async function refreshSnapshots() {
     meta.textContent = `${e.auto ? '自动' : '手动'} · ${e.n} 条`;
     const btn = document.createElement('button');
     btn.textContent = '回退';
+    if (pend.has(e.at)) {
+      // 刚从 CDN 延迟期顶上的条目：按钮仍可点（rollbackTo 有下载重试），
+      // 但明确告知生效窗口，失败时用户知道该等而不是重试
+      meta.textContent += ' · 生效中';
+      btn.title = '快照已存入云端，CDN 正在传播（通常几分钟）。若回退失败请稍后重试';
+    }
     btn.onclick = async () => {
       // 回退是破坏性操作：confirm 里讲清三条——安全网、传播范围、不可撤销性
       const ok = confirm(`确定把笔记回退到 ${absTime(e.at)} 的状态吗？\n\n`
@@ -66,6 +76,7 @@ async function refreshSnapshots() {
       btn.disabled = true;
       try {
         const r = await rollbackTo(s, e.at);
+        if (r.safety) await addPendingSnapshot(r.safety); // 安全网快照也顶着延迟立即显示
         showSnapTip(`已回退：恢复 ${r.restored} 条`
           + (r.tombstoned ? `，删除回退后新建的 ${r.tombstoned} 条` : ''));
       } catch (err) {
@@ -84,7 +95,12 @@ $('snapNow').onclick = async () => {
   if (!s.ak) { showSnapTip('请先保存七牛密钥'); return; }
   try {
     const r = await createSnapshot(s, { auto: false });
-    showSnapTip(r ? `快照已创建（${r.n} 条）` : '本地为空或未完成首次拉取，已跳过');
+    if (r) {
+      await addPendingSnapshot(r); // 立即顶上列表，不等 CDN 索引刷新
+      showSnapTip(`快照已创建（${r.n} 条）——已存入云端，列表重开本页刷新`);
+    } else {
+      showSnapTip('本地为空或未完成首次拉取，已跳过');
+    }
   } catch (err) {
     showSnapTip('创建失败：' + (err && err.message ? err.message : err));
   }

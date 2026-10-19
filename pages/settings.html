@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <link rel="stylesheet" href="../styles/app.css?v=0.5.14">
+  <link rel="stylesheet" href="../styles/app.css?v=0.5.15">
 </head>
 <body class="settings-body">
   <div class="settings-card">
@@ -27,11 +27,11 @@
   </div>
   <div class="settings-card">
     <h2>数据回退</h2>
-    <p class="hint">每小时自动在云端保存一份全量快照（保留 7 天可选）。回退会把笔记恢复到所选时间点的状态；当前数据会先自动存为快照，可随时再回退回来。</p>
+    <p class="hint">每小时自动在云端保存一份全量快照（保留 7 天可选）。回退会把笔记恢复到所选时间点的状态；当前数据会先自动存为快照，可随时再回退回来。新建快照后列表可能有几分钟延迟（云端 CDN 缓存），重开本页即可。</p>
     <button id="snapNow">立即创建快照</button>
     <div id="snapTip" class="saved-tip" hidden></div>
     <div id="snapList"></div>
   </div>
-  <script type="module" src="../pages/settings.js?v=0.5.14"></script>
+  <script type="module" src="../pages/settings.js?v=0.5.15"></script>
 </body>
 </html>
