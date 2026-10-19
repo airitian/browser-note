@@ -56,6 +56,8 @@ function renderList(filter = '') {
   // 用户感知"在 3 号输入的内容跑到 1 号，序号和内容对不上"
   // （因此 persist() 里特意不做重排，见其注释；本比较器只认 createdAt，
   //  updatedAt 仅在 createdAt 缺失时兜底，绝不参与主动排序）
+  // 列表角标内容：默认显示创建序号 1,2,3…；笔记有标题（去空白后非空）时，
+  // 用标题的第一个字替换序号——目录一眼可辨，无标题才回落数字
   const notes = Object.values(notesCache).filter((n) => !n.deleted)
     .sort((a, b) => (a.createdAt || a.updatedAt || 0) - (b.createdAt || b.updatedAt || 0)
       || (a.updatedAt || 0) - (b.updatedAt || 0));
@@ -66,7 +68,9 @@ function renderList(filter = '') {
   items.forEach((n, i) => {
     const div = document.createElement('div');
     div.className = 'note-item' + (n.id === currentId ? ' active' : '');
-    div.textContent = String(i + 1);
+    // Array.from 取首个码点：emoji 等代理对字符不会被切成半个；纯空白标题按无标题处理
+    const head = (n.title || '').trim();
+    div.textContent = head ? Array.from(head)[0] : String(i + 1);
     div.title = (n.title || '(无标题)') + ' · ' + fmtTime(n.updatedAt);
     div.onclick = () => selectNote(n.id);
     list.appendChild(div);
@@ -348,7 +352,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.11';
+document.title = '浏览器笔记 v0.5.12';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden
