@@ -167,7 +167,8 @@ document.addEventListener('visibilitychange', () => {
 const PASTE_THUMB_EDGE = 640;
 const PASTE_MAX_EDGE = 1600;
 
-// 粘贴：一律由我们接管，外来 HTML（浮层/外链卡片）永不进入笔记
+// 粘贴：一律由我们接管。外来 HTML 必经 sanitizeContent 白名单清洗
+// （浮层/脚本/外链卡片拦掉），但保留字体样式（加粗/斜体/颜色/字号等）
 $('editor').addEventListener('paste', async (e) => {
   e.preventDefault();
   const cd = e.clipboardData;
@@ -204,25 +205,43 @@ $('editor').addEventListener('paste', async (e) => {
       }
     }
   }
-  // 非图片内容
+  // 非图片内容：优先级链 —— 代码块原样文本 > HTML 保留字体样式 > JSON 美化 > 纯文本
   const text = (cd && cd.getData('text/plain')) || '';
-  if (text) {
-    if (isInCodeBlock()) {
-      // 光标已在代码块内 → 原样插入（保留换行/缩进），按代码处理
-      insertTextIntoCodeBlock(text);
+  if (text && isInCodeBlock()) {
+    // 光标已在代码块内 → 原样插入（保留换行/缩进），按代码处理；HTML 样式路径不适用
+    insertTextIntoCodeBlock(text);
+  } else if (!isInCodeBlock() && insertPastedHtml(cd)) {
+    // HTML 路径：保留字体样式，已在 insertPastedHtml 内完成插入
+  } else if (text) {
+    // JSON → 自动美化 + 语法高亮，插为代码块；其余按纯文本插入
+    const jb = jsonBlockHtml(text);
+    if (jb) {
+      editor.el.focus();
+      document.execCommand('insertHTML', false, jb);
     } else {
-      // JSON → 自动美化 + 语法高亮，插为代码块
-      const jb = jsonBlockHtml(text);
-      if (jb) {
-        editor.el.focus();
-        document.execCommand('insertHTML', false, jb);
-      } else {
-        document.execCommand('insertText', false, text);
-      }
+      document.execCommand('insertText', false, text);
     }
   }
   persist();
 });
+
+// 粘贴 HTML 路径：sanitizeContent 清洗后保留字体样式插入。
+// 返回 true 表示已插入；false 表示无 HTML 或清洗后无可用内容，调用方回落纯文本路径。
+// 历史事故：旧版一律 insertText 纯文本，从别处复制的加粗/颜色等字体样式全部丢失，
+// 用户感知"粘过来样式没了"；但也不能因此放行未清洗的 HTML（浮层/脚本风险）
+function insertPastedHtml(cd) {
+  const html = (cd && cd.getData('text/html')) || '';
+  if (!html) return false;
+  const clean = sanitizeContent(html, { thumbImg: true });
+  // 清洗结果含非空白文本才插入：整页全是脚本/广告/外链卡片时结果为空，
+  // 回落纯文本路径——避免插入一个空 shell 把用户实际复制的内容吞掉
+  const probe = document.createElement('div');
+  probe.innerHTML = clean;
+  if (!probe.textContent.trim()) return false;
+  editor.el.focus();
+  document.execCommand('insertHTML', false, clean);
+  return true;
+}
 
 function downscaleImage(file, maxEdge) {
   return new Promise((resolve) => {
@@ -326,7 +345,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.8';
+document.title = '浏览器笔记 v0.5.9';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden
