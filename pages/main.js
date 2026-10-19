@@ -2,7 +2,7 @@ import {
   listNotes, getNote, getNotes, upsertNote, getSettings, onNotesChanged,
 } from '../lib/storage.js';
 import { Editor, sanitizeContent, NOTE_IMG_STYLE } from '../lib/editor.js';
-import { scheduleSync, pullSync, pushAll, recordChange, fetchChangelog, maybeBackup } from '../lib/sync.js';
+import { scheduleSync, pullSync, pushAll, recordChange, fetchChangelog, maybeBackup, WIPE_STAMP } from '../lib/sync.js';
 import { fetchVideoNoteList, loadVideoNoteTitles, fetchVideoNote, renderArticleContent } from '../lib/articles.js';
 import { jsonBlockHtml, codeBlockHtml } from '../lib/codeblock.js';
 
@@ -348,7 +348,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.10';
+document.title = '浏览器笔记 v0.5.11';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden
@@ -618,11 +618,18 @@ onNotesChanged((newVal) => {
   // 执行权在 SW：页面只发消息触发并等待，不再本地直跑 oneTimeWipe——
   // 页面与 SW 各持一个 sync.js 模块实例，两边同时跑会并发双清空、
   // 交叉 remove(['notes']) 把刚写入的笔记删掉（2026-10-17 修启动竞态）。
+  // P1 修复（读漏戳误清活数据）：先自查戳，已打戳（所有正常用户）则【根本不发消息】——
+  // 旧版每次页面加载都无条件发消息，SW 冷启动瞬时漏读戳就会误清当期数据；
+  // 只有本地确实没打过戳（如更新时断网致清空失败）才触发 SW 重试。
+  // SW 侧 runOneTimeWipe 另有漏读交叉验证 + 二次确认双保险（见 sync.js）。
   // 云端清理失败 / SW 无响应：整体跳过（本地不动），onStartup / 下次打开自动重试
   let wipedNow = false;
   try {
-    const res = await chrome.runtime.sendMessage({ type: 'one-time-wipe' });
-    wipedNow = !!(res && res.wiped);
+    const stamp = await chrome.storage.local.get('resetStamp');
+    if (stamp.resetStamp !== WIPE_STAMP) {
+      const res = await chrome.runtime.sendMessage({ type: 'one-time-wipe' });
+      wipedNow = !!(res && res.wiped);
+    }
   } catch (_) { /* 断网等情况：保持原样，下次重试 */ }
   await loadSettings();
   notesCache = await getNotes();
