@@ -50,12 +50,15 @@ function fmtTime(ts) {
 }
 
 function renderList(filter = '') {
-  // 按创建时间倒序编号：每条笔记的编号固定（新笔记在上），编辑内容不会改变编号位置。
+  // 按创建时间升序编号（由远到近）：最久创建的笔记排第一（编号 1），最新创建的排在末尾。
+  // 每条笔记的编号只按创建时间固定——编辑/保存内容不得引起列表重排。
   // 历史事故：此前按 updatedAt 排序 + 每次按键重渲染，正在编辑的笔记会瞬间跳到 1 号位，
   // 用户感知"在 3 号输入的内容跑到 1 号，序号和内容对不上"
+  // （因此 persist() 里特意不做重排，见其注释；本比较器只认 createdAt，
+  //  updatedAt 仅在 createdAt 缺失时兜底，绝不参与主动排序）
   const notes = Object.values(notesCache).filter((n) => !n.deleted)
-    .sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)
-      || (b.updatedAt || 0) - (a.updatedAt || 0));
+    .sort((a, b) => (a.createdAt || a.updatedAt || 0) - (b.createdAt || b.updatedAt || 0)
+      || (a.updatedAt || 0) - (b.updatedAt || 0));
   const f = filter.trim().toLowerCase();
   const items = notes.filter((n) => !f || (n.title || '').toLowerCase().includes(f));
   const list = $('noteList');
@@ -345,7 +348,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.9';
+document.title = '浏览器笔记 v0.5.10';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden
