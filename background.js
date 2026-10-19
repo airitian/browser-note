@@ -2,7 +2,7 @@
 // 说明：MV3 弹窗（default_popup）既不能手动缩放、也无法偏移位置，因此默认入口
 // 改为独立窗口（chrome.windows.create type=popup）：可自由拖拽调整，位置可编程控制。
 import { getSettings } from './lib/storage.js';
-import { backupRecent, pushAll, oneTimeWipe, awaitWipeIfRunning, WIPE_STAMP } from './lib/sync.js';
+import { backupRecent, pushAll, createSnapshot, oneTimeWipe, awaitWipeIfRunning, WIPE_STAMP } from './lib/sync.js';
 
 const BIG_URL = chrome.runtime.getURL('pages/main.html?mode=window');
 const BOUNDS_KEY = 'windowBounds';
@@ -158,9 +158,37 @@ chrome.windows.onBoundsChanged.addListener(async (win) => {
 });
 
 // 每日备份（近 7 天）调度：周期 1440 分钟，SW 在后台唤醒时执行
+// 每小时全量快照（数据回退用，v0.5.14）：周期 60 分钟，SW 唤醒时执行
 async function ensureAlarm() {
   const existing = await chrome.alarms.get('dailyBackup');
   if (!existing) chrome.alarms.create('dailyBackup', { periodInMinutes: 1440 });
+  const snap = await chrome.alarms.get('hourlySnapshot');
+  if (!snap) chrome.alarms.create('hourlySnapshot', { periodInMinutes: 60 });
+}
+
+// SW 侧读取【显式存储】的 settings——不走 getSettings() 的 DEFAULT_SETTINGS
+// 回退。原因：DEFAULT_SETTINGS 内置了开发者自己的七牛密钥（config.js 既定
+// 设计，个人自用），一个从未配置过密钥的 profile（全新安装 / 测试 profile）
+// 在浏览器启动瞬间就会拿内置密钥同步——拉别人的云端数据进本地、还往上写
+// 快照。设置页对用户的承诺是「不配置则仅本地保存」，SW 必须守住了。
+// 页面侧（main.js 启动 IIFE）不受影响：那里的 settings 经 addInitScript 种子
+// 或用户保存，ak 为空即整块跳过；此处是 SW 生命周期早于任何页面的兜底路径
+async function getStoredSettings() {
+  const r = await chrome.storage.local.get('settings');
+  return r.settings || null;
+}
+
+// 启动补跑：距上次快照 >50 分钟则立即补一份。定时 alarm 在浏览器关闭期间
+// 不触发，开机首次启动兜底（与 createSnapshot 内部闸门叠加，双保险）。
+// 放在 oneTimeWipe 之后调用——wipe 成功时本地已空，createSnapshot 自然跳过
+async function ensureSnapshotFresh() {
+  try {
+    const r = await chrome.storage.local.get('lastSnapshotAt');
+    if (Date.now() - (r.lastSnapshotAt || 0) > 50 * 60 * 1000) {
+      const s = await getStoredSettings();
+      if (s && s.ak) await createSnapshot(s, { auto: true });
+    }
+  } catch (_) { /* 快照失败不影响启动主流程 */ }
 }
 
 // ===== 一次性彻底清空（v0.3.0 重置）：本地 + 云端全部数据 =====
@@ -187,14 +215,24 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   } catch (_) {
     // 云端清理失败：不落戳，onStartup / 下次开弹窗会重试
   }
+  await ensureSnapshotFresh();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   ensureAlarm();
   try { await oneTimeWipe(); } catch (_) { /* 已打戳则无事发生；失败则下次重试 */ }
+  await ensureSnapshotFresh();
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === 'hourlySnapshot') {
+    // 同上：只认显式配置的密钥，不用 DEFAULT_SETTINGS 回退
+    const s = await getStoredSettings();
+    if (s && s.ak) {
+      try { await createSnapshot(s, { auto: true }); } catch (_) { /* 快照失败不影响其他 alarm */ }
+    }
+    return;
+  }
   if (alarm.name !== 'dailyBackup') return;
   const s = await getSettings();
   if (s && s.ak) {

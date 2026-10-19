@@ -1,7 +1,95 @@
 import { getSettings, saveSettings } from '../lib/storage.js';
-import { pullSync } from '../lib/sync.js';
+import { pullSync, createSnapshot, listSnapshots, rollbackTo } from '../lib/sync.js';
 
 const $ = (id) => document.getElementById(id);
+
+// 相对时间：1 小时内显示分钟，24 小时内显示小时，更早显示月日时分
+function relTime(ts) {
+  const diff = Date.now() - ts;
+  if (diff < 60e3) return '刚刚';
+  if (diff < 3600e3) return Math.floor(diff / 60e3) + ' 分钟前';
+  if (diff < 86400e3) return Math.floor(diff / 3600e3) + ' 小时前';
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}-${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function absTime(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function showSnapTip(text) {
+  const tip = $('snapTip');
+  tip.textContent = text;
+  tip.hidden = false;
+  clearTimeout(showSnapTip._t);
+  showSnapTip._t = setTimeout(() => { tip.hidden = true; }, 4000);
+}
+
+// 渲染快照列表（新→旧，最多 30 条）。无密钥/无快照/拉取失败都有明确空态
+async function refreshSnapshots() {
+  const box = $('snapList');
+  const s = await getSettings();
+  if (!s.ak) {
+    box.innerHTML = '<p class="hint">配置并保存七牛密钥后可用。</p>';
+    return;
+  }
+  let list = [];
+  try {
+    list = await listSnapshots(s);
+  } catch (_) { /* listSnapshots 已内部容错，双保险 */ }
+  if (!list.length) {
+    box.innerHTML = '<p class="hint">暂无快照。每小时自动保存一份，也可点上方按钮立即创建。</p>';
+    return;
+  }
+  box.innerHTML = '';
+  for (const e of list.slice(0, 30)) {
+    const row = document.createElement('div');
+    row.className = 'snap-row';
+    const time = document.createElement('span');
+    time.className = 'snap-time';
+    time.textContent = `${absTime(e.at)}（${relTime(e.at)}）`;
+    const meta = document.createElement('span');
+    meta.className = 'snap-meta';
+    meta.textContent = `${e.auto ? '自动' : '手动'} · ${e.n} 条`;
+    const btn = document.createElement('button');
+    btn.textContent = '回退';
+    btn.onclick = async () => {
+      // 回退是破坏性操作：confirm 里讲清三条——安全网、传播范围、不可撤销性
+      const ok = confirm(`确定把笔记回退到 ${absTime(e.at)} 的状态吗？\n\n`
+        + '· 当前数据会先自动存为一份快照，可随时再回退回来\n'
+        + '· 其他浏览器下次同步时会采用这个状态\n'
+        + '· 回退后新建的笔记会被删除（以墓碑形式同步）');
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        const r = await rollbackTo(s, e.at);
+        showSnapTip(`已回退：恢复 ${r.restored} 条`
+          + (r.tombstoned ? `，删除回退后新建的 ${r.tombstoned} 条` : ''));
+      } catch (err) {
+        showSnapTip('回退失败：' + (err && err.message ? err.message : err));
+      }
+      btn.disabled = false;
+      refreshSnapshots();
+    };
+    row.append(time, meta, btn);
+    box.appendChild(row);
+  }
+}
+
+$('snapNow').onclick = async () => {
+  const s = await getSettings();
+  if (!s.ak) { showSnapTip('请先保存七牛密钥'); return; }
+  try {
+    const r = await createSnapshot(s, { auto: false });
+    showSnapTip(r ? `快照已创建（${r.n} 条）` : '本地为空或未完成首次拉取，已跳过');
+  } catch (err) {
+    showSnapTip('创建失败：' + (err && err.message ? err.message : err));
+  }
+  refreshSnapshots();
+};
 
 (async () => {
   const s = await getSettings();
@@ -10,6 +98,7 @@ const $ = (id) => document.getElementById(id);
   $('bucket').value = s.bucket || '';
   $('domain').value = s.domain || '';
   $('region').value = s.region || 'z2';
+  refreshSnapshots();
 })();
 
 $('saveSettings').onclick = async () => {
@@ -33,4 +122,5 @@ $('saveSettings').onclick = async () => {
   const tip = $('saved');
   tip.hidden = false;
   setTimeout(() => (tip.hidden = true), 1500);
+  refreshSnapshots();
 };
