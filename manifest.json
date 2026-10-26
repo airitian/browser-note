@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "浏览器笔记",
-  "version": "0.5.17",
+  "version": "0.5.18",
   "description": "本地优先 + 七牛云同步的笔记扩展：可缩放窗口 + 云端文章阅读",
   "permissions": ["storage", "alarms"],
   "host_permissions": [

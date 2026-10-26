@@ -233,6 +233,9 @@ body.app-body.standalone { width: 100vw; height: 100vh; }
 
 /* 笔记内图片可点击查看的视觉提示 */
 .editor img { cursor: zoom-in; border-radius: 4px; }
+/* 笔记/文章内链接：悬停显示手型光标（contenteditable 默认是文本光标，链接不可见可点，
+   用户无从判断「这个 URL 能点」）；非链接区域保持文本光标不变 */
+.editor a, .article-content a { cursor: pointer; }
 
 /* 代码/JSON 块（编辑器内）：等宽 + 保留格式 + 浅色底，横向可滚动 */
 .editor pre {
