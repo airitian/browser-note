@@ -2,7 +2,7 @@ import {
   listNotes, getNote, getNotes, upsertNote, getSettings, onNotesChanged,
 } from '../lib/storage.js';
 import { Editor, sanitizeContent, NOTE_IMG_STYLE } from '../lib/editor.js';
-import { scheduleSync, pullSync, pushAll, recordChange, fetchChangelog, maybeBackup } from '../lib/sync.js';
+import { scheduleSync, pullSync, pushAll, recordChange, fetchChangelog, maybeBackup, listSnapshots, rollbackTo, addPendingSnapshot } from '../lib/sync.js';
 import { fetchVideoNoteList, loadVideoNoteTitles, fetchVideoNote, renderArticleContent } from '../lib/articles.js';
 import { jsonBlockHtml, codeBlockHtml } from '../lib/codeblock.js';
 
@@ -47,6 +47,22 @@ function setStatus(s, msg) {
 
 function fmtTime(ts) {
   return new Date(ts).toLocaleString('zh-CN', { hour12: false });
+}
+
+// 绝对时间 / 相对时间（回退快照列表用，与设置页「数据回退」卡片同款文案）
+function absTime(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function relTime(ts) {
+  const diff = Date.now() - ts;
+  if (diff < 60e3) return '刚刚';
+  if (diff < 3600e3) return Math.floor(diff / 60e3) + ' 分钟前';
+  if (diff < 86400e3) return Math.floor(diff / 3600e3) + ' 小时前';
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}-${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 function renderList(filter = '') {
@@ -357,7 +373,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.16';
+document.title = '浏览器笔记 v0.5.17';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden
@@ -511,14 +527,23 @@ onClick('menuBtn', async () => {
     $('menuInfo').textContent = '最近更新时间：' + fmtTime(currentNote.updatedAt);
   }
 });
-// 点菜单外任意处收回菜单（标准下拉行为）：点击落在 #menu 或 #menuBtn 内则不收。
-// 事件顺序：menuBtn.onclick 先切换 hidden，再冒泡到这里——用 target 归属判断，开/关两种点击都正确
+// 点菜单/变更记录面板外任意处收回（标准下拉行为）：
+//   - #menu：点击落在 #menu 或 #menuBtn 内则不收
+//   - #menuLogPanel：点击落在面板内部（含回退按钮）或 #menu 内（含「变更记录」按钮，用于 toggle）则不收；
+//     点击编辑器/搜索框/笔记列表等外部区域 → 关闭面板（此前只关菜单、不关变更记录面板，
+//     导致点编辑器时面板仍挂在页面上）
+// 事件顺序：menuBtn/menuLog 的 onclick 先切换 hidden，再冒泡到此处——用 target 归属判断，
+// 开/关两种点击都正确，且互不误伤（点「变更记录」不会触发此处把它秒关）
 document.addEventListener('click', (e) => {
   const m = $('menu');
-  if (!m || m.hidden) return;
-  const btn = $('menuBtn');
-  if (m.contains(e.target) || (btn && btn.contains(e.target))) return;
-  m.hidden = true;
+  if (m && !m.hidden) {
+    const btn = $('menuBtn');
+    if (!(m.contains(e.target) || (btn && btn.contains(e.target)))) m.hidden = true;
+  }
+  const panel = $('menuLogPanel');
+  if (panel && !panel.hidden) {
+    if (!panel.contains(e.target) && !m.contains(e.target)) panel.hidden = true;
+  }
 });
 onClick('menuReset', async () => {
   // 默认入口即独立窗口：清掉记忆的尺寸/位置，当前窗口重置为默认 600×400
@@ -624,21 +649,119 @@ onClick('menuLog', async () => {
   panel.hidden = !panel.hidden;
   if (panel.hidden) return;
   panel.innerHTML = '<div class="log-loading">加载中…</div>';
-  const log = await fetchChangelog(settings);
-  if (log === null) { panel.innerHTML = '<div class="log-empty">未配置七牛同步</div>'; return; }
-  if (!log.length) { panel.innerHTML = '<div class="log-empty">暂无变更记录</div>'; return; }
-  panel.innerHTML = log
+  // 未配置密钥：变更记录与数据回退都依赖七牛，统一给出明确空态（此前的
+  // "未配置七牛同步" 只覆盖变更记录，现在回退区也一并不可用）
+  if (!settings || !settings.ak) {
+    panel.innerHTML = '<div class="log-empty">未配置七牛同步：变更记录与数据回退均不可用</div>';
+    return;
+  }
+  // 两路并行：拉变更记录 + 拉可回退快照列表（含本地 pending 顶上的 CDN 延迟期条目）
+  const [log, snapList] = await Promise.all([
+    fetchChangelog(settings),
+    (async () => { try { return await listSnapshots(settings); } catch (_) { return []; } })(),
+  ]);
+  // —— 变更记录区（结构映射，文本走 textContent 防 XSS）——
+  let html = '';
+  if (log === null) html += '<div class="log-empty">变更记录加载失败</div>';
+  else if (!log.length) html += '<div class="log-empty">暂无变更记录</div>';
+  else html += log
     .map(() => '<div class="log-item"><span class="log-action"></span><span class="log-title"></span><div class="log-time"></div></div>')
     .join('');
+  // —— 回退区标题 + 结果提示 + 快照列表容器 ——
+  html += '<div class="log-sep">近期可回退快照</div>';
+  html += '<div class="log-tip" id="menuLogTip" hidden></div>';
+  html += '<div id="menuSnapList"></div>';
+  panel.innerHTML = html;
   const acts = panel.querySelectorAll('.log-action');
   const titles = panel.querySelectorAll('.log-title');
   const times = panel.querySelectorAll('.log-time');
-  log.forEach((e, i) => {
-    acts[i].textContent = e.action;
-    titles[i].textContent = e.title || '(无标题)';
-    times[i].textContent = fmtTime(e.t);
-  });
+  if (Array.isArray(log)) {
+    log.forEach((e, i) => {
+      acts[i].textContent = e.action;
+      titles[i].textContent = e.title || '(无标题)';
+      times[i].textContent = fmtTime(e.t);
+    });
+  }
+  // —— 回退快照列表（含「回退」按钮，与设置页「数据回退」卡片同套逻辑）——
+  await renderSnapList(settings, snapList);
 });
+
+// 在「变更记录」面板内渲染近期可回退快照列表 + 回退按钮。
+// 功能与设置页「数据回退」卡片一致（同一套 listSnapshots/rollbackTo），
+// 让用户在弹窗里也能直接回退，不必再打开设置页。回退成功后会刷新本地
+// 笔记视图（rollbackTo 已替换本地 notes 并推送），编辑区立即反映新状态。
+async function renderSnapList(s, list) {
+  const box = $('menuSnapList');
+  if (!box) return;
+  if (!list || !list.length) {
+    box.innerHTML = '<div class="log-empty">暂无可回退快照（每小时自动创建一份）</div>';
+    return;
+  }
+  // 标记「生效中」：刚从 CDN 延迟期顶上的本地 pending 条目（文件已进源站，
+  // 但 CDN 边缘还没刷出，列表先由本地条目顶上）——告知用户不是坏了
+  const pend = new Set((await chrome.storage.local.get('pendingSnapshots')).pendingSnapshots?.map((e) => e.at) || []);
+  box.innerHTML = '';
+  for (const e of list.slice(0, 30)) {
+    const row = document.createElement('div');
+    row.className = 'snap-row';
+    const time = document.createElement('span');
+    time.className = 'snap-time';
+    time.textContent = `${absTime(e.at)}（${relTime(e.at)}）`;
+    const meta = document.createElement('span');
+    meta.className = 'snap-meta';
+    meta.textContent = `${e.auto ? '自动' : '手动'} · ${e.n} 条`;
+    const btn = document.createElement('button');
+    btn.textContent = '回退';
+    if (pend.has(e.at)) {
+      meta.textContent += ' · 生效中';
+      btn.title = '快照已存入云端，CDN 正在传播（通常几分钟）。若回退失败请稍后重试';
+    }
+    btn.onclick = async () => {
+      // 回退是破坏性操作：confirm 讲清三条——安全网、传播范围、不可撤销性
+      const ok = confirm(`确定把笔记回退到 ${absTime(e.at)} 的状态吗？\n\n`
+        + '· 当前数据会先自动存为一份快照，可随时再回退回来\n'
+        + '· 其他浏览器下次同步时会采用这个状态\n'
+        + '· 回退后新建的笔记会被删除（以墓碑形式同步）');
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        const r = await rollbackTo(s, e.at);
+        if (r.safety) await addPendingSnapshot(r.safety); // 安全网快照同样顶着延迟立即显示
+        showLogTip(`已回退：恢复 ${r.restored} 条`
+          + (r.tombstoned ? `，删除回退后新建的 ${r.tombstoned} 条` : ''));
+        // 回退已替换本地 notes：刷新内存缓存与列表，让编辑区立即反映新状态
+        notesCache = await getNotes();
+        renderList($('search').value);
+        if (currentId && notesCache[currentId]) await selectNote(currentId);
+        else {
+          const notes = Object.values(notesCache).sort((a, b) => b.updatedAt - a.updatedAt);
+          if (notes.length) await selectNote(notes[0].id);
+        }
+      } catch (err) {
+        showLogTip('回退失败：' + (err && err.message ? err.message : err), true);
+      }
+      btn.disabled = false;
+      // 重新拉取快照列表，刷新面板（含刚建的安全网快照、pending 交棒）
+      try {
+        const newList = await listSnapshots(s);
+        await renderSnapList(s, newList);
+      } catch (_) { /* 拉取失败：保留现有列表 */ }
+    };
+    row.append(time, meta, btn);
+    box.appendChild(row);
+  }
+}
+
+// 面板内回退结果提示（复用 .log-tip，4s 后自动隐藏；err=true 切换红色错误样式）
+function showLogTip(text, err) {
+  const tip = $('menuLogTip');
+  if (!tip) return;
+  tip.textContent = text;
+  tip.className = 'log-tip' + (err ? ' err' : '');
+  tip.hidden = false;
+  clearTimeout(showLogTip._t);
+  showLogTip._t = setTimeout(() => { tip.hidden = true; }, 4000);
+}
 
 // 多窗口：本地 notes 变化则刷新列表（同步内存缓存，不重载荷当前正在编辑的内容）
 onNotesChanged((newVal) => {
