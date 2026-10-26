@@ -220,11 +220,16 @@ $('editor').addEventListener('paste', async (e) => {
   } else if (!isInCodeBlock() && insertPastedHtml(cd)) {
     // HTML 路径：保留字体样式，已在 insertPastedHtml 内完成插入
   } else if (text) {
-    // JSON → 自动美化 + 语法高亮，插为代码块；其余按纯文本插入
+    // JSON → 自动美化 + 语法高亮，插为代码块；纯文本含 URL → 链接化后插入（粘贴的链接立即可点击）；
+    // 其余按纯文本插入。注意：链接化走 sanitizeContent（先转义再白名单清洗 + linkify），
+    // 与笔记存储/启动清洗同款逻辑，保证"粘贴即链接、重载后一致"。
     const jb = jsonBlockHtml(text);
     if (jb) {
       editor.el.focus();
       document.execCommand('insertHTML', false, jb);
+    } else if (/https?:\/\//i.test(text)) {
+      editor.el.focus();
+      document.execCommand('insertHTML', false, sanitizeContent(escapeText(text), { thumbImg: true }));
     } else {
       document.execCommand('insertText', false, text);
     }
@@ -352,7 +357,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.15';
+document.title = '浏览器笔记 v0.5.16';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden
@@ -446,6 +451,31 @@ function bindImageLightbox(container, onFallbackRemove) {
 }
 bindImageLightbox($('editor'), () => persist());
 bindImageLightbox($('articleContent'));
+
+// 链接点击 → 在浏览器新标签页打开（扩展弹窗/独立窗自身不会导航，必须显式走 chrome.tabs.create）
+// 与图片灯箱共用事件委托：图片由灯箱接管（本分支对 IMG target 直接跳过），链接由本分支打开。
+// 仅放行 http(s)（javascript: 等危险协议已在 sanitizeContent 上游被剥，这里双保险再校验一次）。
+// 编辑态下点击链接直接打开——链接主要用于跳转；要编辑链接文字可用方向键移入或点链接外侧落光标
+function bindLinkOpen(container) {
+  if (!container) { console.warn('[browser-note] 链接点击绑定失败：容器不存在'); return; }
+  container.addEventListener('click', (e) => {
+    if (e.target && e.target.tagName === 'IMG') return; // 让图片灯箱处理
+    const a = e.target.closest && e.target.closest('a');
+    if (!a) return;
+    const href = a.getAttribute('href') || '';
+    if (!/^https?:\/\//i.test(href)) return;
+    e.preventDefault();
+    try {
+      if (chrome && chrome.tabs && chrome.tabs.create) {
+        chrome.tabs.create({ url: href, active: true });
+      } else {
+        window.open(href, '_blank', 'noopener,noreferrer');
+      }
+    } catch (_) { /* 上下文已失效等异常：静默忽略，不抛未处理 rejection */ }
+  });
+}
+bindLinkOpen($('editor'));
+bindLinkOpen($('articleContent'));
 
 // 实时守护：每 1s 清掉任何混进文档的危险元素（外来 style/script/fixed 浮层）。
 // 即使异常内容绕过清洗，也能在 1 秒内自愈，保证窗口始终可操作
