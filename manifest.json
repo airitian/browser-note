@@ -9,6 +9,7 @@
     "http://tmycvi0la.hn-bkt.clouddn.com/*",
     "https://rsf.qiniuapi.com/*",
     "http://tmralw2m1.hn-bkt.clouddn.com/*",
+    "https://s3.cn-south-1.qiniucs.com/*",
     "https://*.qiniucs.com/*"
   ],
   "action": {
