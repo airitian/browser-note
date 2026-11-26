@@ -1,7 +1,7 @@
 // 后台 service worker：工具栏点击 → 独立窗口管理（尺寸/位置记忆）+ 每日备份调度
 // 说明：MV3 弹窗（default_popup）既不能手动缩放、也无法偏移位置，因此默认入口
 // 改为独立窗口（chrome.windows.create type=popup）：可自由拖拽调整，位置可编程控制。
-import { getSettings } from './lib/storage.js';
+import { getSettings, migrateStoredSettings } from './lib/storage.js';
 import { backupRecent, pushAll, createSnapshot, oneTimeWipe, awaitWipeIfRunning, WIPE_STAMP } from './lib/sync.js';
 
 const BIG_URL = chrome.runtime.getURL('pages/main.html?mode=window');
@@ -173,9 +173,10 @@ async function ensureAlarm() {
 // 快照。设置页对用户的承诺是「不配置则仅本地保存」，SW 必须守住了。
 // 页面侧（main.js 启动 IIFE）不受影响：那里的 settings 经 addInitScript 种子
 // 或用户保存，ak 为空即整块跳过；此处是 SW 生命周期早于任何页面的兜底路径
+// 同样做旧端点迁移（历史配置里的 na0/旧域名不能带进快照链路）。
 async function getStoredSettings() {
   const r = await chrome.storage.local.get('settings');
-  return r.settings || null;
+  return r.settings ? migrateStoredSettings(r.settings) : null;
 }
 
 // 启动补跑：距上次快照 >50 分钟则立即补一份。定时 alarm 在浏览器关闭期间
