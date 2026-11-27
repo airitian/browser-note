@@ -2,7 +2,7 @@ import {
   listNotes, getNote, getNotes, upsertNote, getSettings, onNotesChanged,
 } from '../lib/storage.js';
 import { Editor, sanitizeContent, NOTE_IMG_STYLE } from '../lib/editor.js';
-import { scheduleSync, pullSync, pushAll, recordChange, fetchChangelog, maybeBackup, listSnapshots, rollbackTo, addPendingSnapshot } from '../lib/sync.js';
+import { scheduleSync, pullSync, pushAll, readSyncStatus, recordChange, fetchChangelog, maybeBackup, listSnapshots, rollbackTo, addPendingSnapshot } from '../lib/sync.js';
 import { markGithubPullOk, requestFullBackup } from '../lib/github-backup.js';
 import { fetchVideoNoteList, loadVideoNoteTitles, fetchVideoNote, renderArticleContent } from '../lib/articles.js';
 import { jsonBlockHtml, codeBlockHtml } from '../lib/codeblock.js';
@@ -38,12 +38,23 @@ async function loadSettings() {
   settings = await getSettings();
 }
 
+// 仅内存：本轮推送在途。scheduleSync 触发时 statusCb('syncing') 会置位，
+// 终态回调清零；切换笔记时据此保持"同步中"，但不持久化为"已同步"
+let syncInFlight = false;
+
 function setStatus(s, msg) {
-  const map = { local: '仅本地', syncing: '同步中…', synced: '已同步', error: '同步失败' };
+  // 兼容两套调用：老 statusCb('synced'/'error', msg) 字符串，以及
+  // readSyncStatus 返回的 { key, msg } 对象
+  const objectForm = s && typeof s === 'object';
+  const key = objectForm ? (s.key || 'local') : s;
+  const detail = objectForm ? (s.msg || '') : (msg || '');
+  syncInFlight = key === 'syncing';
+  const map = { local: '仅本地', syncing: '同步中…', synced: '已同步', pending: '待同步', error: '同步失败' };
   const el = $('status');
-  el.textContent = map[s] || s;
-  el.className = 'status ' + s;
-  el.title = s === 'error' && msg ? msg : '';
+  if (!el) return;
+  el.textContent = map[key] || key;
+  el.className = 'status ' + key;
+  el.title = (key === 'error' || key === 'pending') && detail ? detail : '';
 }
 
 function fmtTime(ts) {
@@ -113,7 +124,10 @@ async function selectNote(id) {
       await chrome.storage.local.set({ notes: { ...notesCache } });
       if (settings && settings.ak) scheduleSync(currentId, settings, setStatus);
     }
-    setStatus(settings && settings.ak ? 'synced' : 'local');
+    // 历史假阳性：此处曾无条件 setStatus(settings && settings.ak ? 'synced' : 'local')，
+    // 只要配了 AK 就绿灯，哪怕从未推送 / 推送失败 / 本地有新改动。
+    // 改为只读判定持久化戳：七牛笔记 + 索引全链路成功后才可能显示"已同步"
+    setStatus(await readSyncStatus(settings, { syncing: syncInFlight }));
   }
   renderList($('search').value);
 }
@@ -374,7 +388,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.23';
+document.title = '浏览器笔记 v0.5.24';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden

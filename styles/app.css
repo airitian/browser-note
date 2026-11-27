@@ -125,6 +125,9 @@ body.app-body.standalone { width: 100vw; height: 100vh; }
 }
 .status.synced { color: #0F6E56; background: #E1F5EE; }
 .status.syncing { color: #854F0B; background: #FAEEDA; }
+/* 待同步：有改动但尚未成功推送到七牛云。琥珀色而非绿色，
+   且只设颜色/背景，绝不设 display——[hidden] 黑屏防线 */
+.status.pending { color: #854F0B; background: #FAEEDA; }
 .status.error { color: #A32D2D; background: #FCEBEB; }
 
 /* 版本号：确认扩展是否重新加载的肉眼可验标记 */
