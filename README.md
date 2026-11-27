@@ -8,7 +8,7 @@
 （即包含 `manifest.json` 的那一层）。
 
 `manifest.json` 中带有 `key` 字段（RSA 公钥），因此**扩展 ID 固定为
-`ieg bjdl eibik ahpp jcdk efbon ldfpap`，与所在目录无关** —— 以后无论把项目挪到哪里，
+`iegbjdleibikahhppjcdkefbonldfpap`，与所在目录无关** —— 以后无论把项目挪到哪里，
 浏览器里的扩展身份、笔记数据、同步配置都不会变。未打包扩展的 ID 默认为加载路径的
 SHA-256 派生值，挪目录就会换一个身份；`key` 字段就是为了消除这个隐患。
 
