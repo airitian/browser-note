@@ -1,8 +1,0 @@
-# 本地数据服务的运行时数据（笔记正文）不入库
-data/
-*.tmp
-*.corrupt-*
-
-# 隐藏启动用的 VBS 由 install-autostart.ps1 生成，内含本机 node 的绝对路径
-# （换机器/换 node 版本就失效），不入库
-start-hidden.vbs

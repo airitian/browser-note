@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <link rel="stylesheet" href="../styles/app.css?v=0.5.30">
+  <link rel="stylesheet" href="../styles/app.css?v=0.5.31">
 </head>
 <body class="settings-body">
   <div class="settings-card">
@@ -24,20 +24,6 @@
     <button id="saveSettings">保存</button>
     <div id="saved" class="saved-tip" hidden>已保存</div>
     <p class="hint">打开方式：浏览器右上角扩展图标 → 右键 →「选项」。</p>
-  </div>
-  <div class="settings-card">
-    <h2>本地数据服务（同机唯一副本）</h2>
-    <p class="hint">同一台电脑上，Chrome / Chrome Beta / Chrome Dev / Edge 各自都会存一份笔记副本，彼此靠云端同步。启用本地服务后，这四个浏览器改为<b>共用同一份</b>数据：断网也能互通，同步是毫秒级。<br>
-      为什么不能直接让四个浏览器共用一份存储：浏览器的扩展存储是 LevelDB，<b>有单写者锁</b>，实测第二个浏览器打开会直接报 <code>LOCK: Access denied</code>（见项目记忆里的 probe-shared-store 实测）。所以多一层本机服务，由它独占写入。<br>
-      启用后云端同步仍然保留（负责跨设备与远端备份）。</p>
-    <label>服务地址
-      <input id="localUrl" placeholder="http://127.0.0.1:8787" autocomplete="off">
-    </label>
-    <label class="inline"><input id="localEnabled" type="checkbox">启用本地数据服务</label>
-    <button id="localSave">保存并测试连接</button>
-    <div id="localTip" class="saved-tip" hidden></div>
-    <div id="localStatus" class="snap-status" hidden></div>
-    <p class="hint">启动服务：在扩展目录的 <code>data-service</code> 下执行 <code>node server.mjs</code>；开机自启执行 <code>powershell -ExecutionPolicy Bypass -File install-autostart.ps1</code>。数据文件在 <code>data-service\data\notes.json</code>。</p>
   </div>
   <div class="settings-card">
     <h2>GitHub 全量备份（第三副本）</h2>
@@ -67,6 +53,6 @@
     <div id="snapTip" class="saved-tip" hidden></div>
     <div id="snapList"></div>
   </div>
-  <script type="module" src="../pages/settings.js?v=0.5.30"></script>
+  <script type="module" src="../pages/settings.js?v=0.5.31"></script>
 </body>
 </html>

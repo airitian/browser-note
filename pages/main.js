@@ -2,7 +2,7 @@ import {
   listNotes, getNote, getNotes, upsertNote, getSettings, onNotesChanged,
 } from '../lib/storage.js';
 import { Editor, sanitizeContent, NOTE_IMG_STYLE } from '../lib/editor.js';
-import { scheduleSync, pullSync, pullSyncDetail, pushAll, readSyncStatus, recordChange, fetchChangelog, maybeBackup, listSnapshots, rollbackTo, addPendingSnapshot } from '../lib/sync.js';
+import { scheduleSync, pullSync, pushAll, readSyncStatus, recordChange, fetchChangelog, maybeBackup, listSnapshots, rollbackTo, addPendingSnapshot } from '../lib/sync.js';
 import { markGithubPullOk, requestFullBackup } from '../lib/github-backup.js';
 import { fetchVideoNoteList, loadVideoNoteTitles, fetchVideoNote, renderArticleContent } from '../lib/articles.js';
 import { jsonBlockHtml, codeBlockHtml } from '../lib/codeblock.js';
@@ -211,8 +211,7 @@ let lastAutoPullAt = 0;
 const AUTO_PULL_MIN_GAP = 1500;
 
 async function autoPullOnFocus() {
-  // 本地数据服务启用时，即便没有七牛也要拉——同机唯一副本就在那儿
-  if (!settings || (!settings.ak && !settings.localUrl)) return;   // 两条通道都没配：无源可拉
+  if (!settings || !settings.ak) return;             // 仅本地模式：无云端可拉
   if (autoPullBusy) return;
   const now = Date.now();
   if (now - lastAutoPullAt < AUTO_PULL_MIN_GAP) return;
@@ -221,8 +220,8 @@ async function autoPullOnFocus() {
   try {
     if (persistTimer) await persist();                // 先落盘，保住本地未保存编辑
     const beforeAt = currentId && notesCache[currentId] ? notesCache[currentId].updatedAt : 0;
-    const d = await pullSyncDetail(settings);         // LWW：仅覆盖 updatedAt 更新的笔记
-    if (d.st === 'error') return;                      // 两条通道都不可达：静默，下次切回再试
+    const st = await pullSync(settings);              // LWW：仅覆盖 updatedAt 更新的笔记
+    if (st === 'error') return;                       // 远端不可达：静默，下次切回再试
     notesCache = await getNotes();
     renderList($('search').value);
     const cur = currentId && notesCache[currentId];
@@ -441,7 +440,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.30';
+document.title = '浏览器笔记 v0.5.31';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden
@@ -624,9 +623,7 @@ onClick('menuRefresh', async () => {
   await persist();
   if (settings && settings.ak) {
     try {
-      // 手动刷新：强制拉一次云端（本地服务已在自动拉取里覆盖，
-      // 但用户明确点了刷新 → 跨设备的云端内容也一并取回）
-      await pullSync(settings, () => renderList($('search').value), { forceCloud: true });
+      await pullSync(settings, () => renderList($('search').value));
     } catch (e) {
       setStatus('error', e.message);
     }
@@ -911,15 +908,8 @@ onNotesChanged((newVal) => {
       const postWipe = wipedNow || Date.now() - stampAt < 10 * 60 * 1000;
       pulledOk = !pulled.lastPullAt || !postWipe ? false : true;
       if (!pulled.lastPullAt || !postWipe) {
-        // lastPullAt 是【云端】闸门：只有真的从云端拉到过才允许写云端。
-        // 本地服务成功不算数——否则「只拉过本地、没拉过云端」的浏览器会拿本地
-        // 子集去覆写云端权威索引，其余笔记文件沦为孤儿（sync.js ensurePulled
-        // 的老坑，见其注释）。未启用本地服务时 d.cloud 与旧逻辑完全等价。
-        const d = await pullSyncDetail(settings, () => renderList($('search').value));
-        if (d.cloud === 'ok' || d.cloud === 'empty') {
-          await chrome.storage.local.set({ lastPullAt: Date.now() });
-          pulledOk = true;
-        }
+        const st = await pullSync(settings, () => renderList($('search').value));
+        if (st !== 'error') { await chrome.storage.local.set({ lastPullAt: Date.now() }); pulledOk = true; }
         notesCache = await getNotes();
       }
     } catch (_) { /* 忽略：拉取失败不阻塞启动 */ }

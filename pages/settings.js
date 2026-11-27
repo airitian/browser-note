@@ -1,11 +1,10 @@
-import { getSettings, saveSettings, getLocalServiceConfig, saveLocalServiceConfig } from '../lib/storage.js';
+import { getSettings, saveSettings } from '../lib/storage.js';
 import { pullSync, createSnapshot, listSnapshots, rollbackTo, addPendingSnapshot } from '../lib/sync.js';
 import {
   getGithubBackupConfig, saveGithubBackupConfig, validateRepo,
   getGithubBackupStatus, markGithubPullOk, requestFullBackup,
 } from '../lib/github-backup.js';
 import { readLiveStatus } from '../lib/live.js';
-import { localHealth, readLocalStatus, resetLocalProbe, LOCAL_DEFAULT_URL } from '../lib/local.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -79,8 +78,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.githubBackup) refreshGithubConfigForm();
   // 实时通道状态（推送写入 / 拉取命中与否）
   if (changes.liveSyncStatus) renderLiveStatus();
-  // 本地数据服务状态（推送写入 / 失败留痕）
-  if (changes.localSyncStatus) renderLocalStatus();
 });
 
 // ===== 实时同步通道状态（v0.5.28 引入）=====
@@ -109,66 +106,6 @@ async function renderLiveStatus() {
     box.className = 'snap-status';
     box.textContent = `实时通道：${pushPart}。下次拉取后这里会显示是否命中。`;
   }
-}
-
-// ===== 本地数据服务卡片（v0.5.30）=====
-// 配置走独立 storage key（localService），不塞进 settings：设置页上方
-// saveSettings 构造的是七牛那五字段的【整体覆盖】，地址放里面会被用户每
-// 保存一次七牛配置就冲掉（与 GitHub 配置同款理由）。
-// 状态要回答两个问题：① 服务在不在跑 ② 最近一次同步成不成功。
-async function renderLocalStatus() {
-  const box = $('localStatus');
-  if (!box) return;
-  let cfg = { enabled: false, url: '' };
-  try {
-    cfg = await getLocalServiceConfig();
-  } catch (_) { /* 存储不可用：按未启用展示 */ }
-  let st = {};
-  try {
-    st = await readLocalStatus();
-  } catch (_) { /* 同上 */ }
-  box.hidden = false;
-  if (!cfg.enabled) {
-    box.className = 'snap-status';
-    box.textContent = '本地数据服务：未启用。当前四个浏览器各自存一份，靠云端同步。';
-    return;
-  }
-  const health = await localHealth({ localUrl: cfg.url }, { force: true });
-  const syncPart = st.error
-    ? `最近一次同步失败：${st.error}`
-    : (st.at ? `最近一次同步成功：${absTime(st.at)}` : '尚无同步记录');
-  if (health && health.ok) {
-    box.className = 'snap-status ok';
-    box.textContent = `本地数据服务：运行中（${cfg.url}，服务内 ${health.notes} 篇）。${syncPart}。`
-      + '本机各浏览器共用这一份数据，断网也能互通。';
-  } else {
-    box.className = 'snap-status fail';
-    box.textContent = `本地数据服务：连不上（${cfg.url}）。${syncPart}。`
-      + '请先启动服务：扩展目录 data-service 下执行 node server.mjs。连不上时会自动退回云端同步，功能不受影响。';
-  }
-}
-
-// 填表：把当前配置回填到输入框
-async function refreshLocalServiceForm() {
-  let cfg = { enabled: false, url: '' };
-  try {
-    cfg = await getLocalServiceConfig();
-  } catch (_) { /* 忽略 */ }
-  const urlEl = $('localUrl');
-  const enEl = $('localEnabled');
-  if (!urlEl || !enEl) return;
-  urlEl.value = cfg.url || LOCAL_DEFAULT_URL;
-  enEl.checked = !!cfg.enabled;
-}
-
-function showLocalTip(text, ok = true) {
-  const tip = $('localTip');
-  if (!tip) return;
-  tip.textContent = text;
-  tip.style.color = ok ? '' : '#A32D2D';
-  tip.hidden = false;
-  clearTimeout(showLocalTip._t);
-  showLocalTip._t = setTimeout(() => { tip.hidden = true; }, 4000);
 }
 
 // ===== GitHub 全量备份独立卡片（v0.5.23）=====
@@ -348,48 +285,7 @@ $('snapNow').onclick = async () => {
   refreshGithubConfigForm();
   renderGithubBackupStatus();
   renderLiveStatus();
-  refreshLocalServiceForm();
-  renderLocalStatus();
 })();
-
-// 本地数据服务：保存并测试连接。
-// 保存与测试分开的两件事：先落配置（用户填错了也要记住，方便下次改），
-// 再探活给出明确结论——「服务没跑」和「地址填错」是两回事。
-$('localSave').onclick = async () => {
-  const btn = $('localSave');
-  const url = ($('localUrl').value || '').trim();
-  const enabled = !!$('localEnabled').checked;
-  if (btn) btn.disabled = true;
-  try {
-    // 地址格式校验：只允许 http/https + 主机名 + 可选端口
-    if (enabled && url) {
-      let u = null;
-      try { u = new URL(url); } catch (_) { /* 非法 URL */ }
-      if (!u || (u.protocol !== 'http:' && u.protocol !== 'https:')) {
-        showLocalTip('地址格式不对，应为 http://主机:端口', false);
-        return;
-      }
-    }
-    await saveLocalServiceConfig({ enabled, url });
-    resetLocalProbe();               // 地址可能变了 → 旧的探测缓存作废
-    await refreshLocalServiceForm();
-    await renderLocalStatus();
-    if (!enabled) {
-      showLocalTip('已关闭本地数据服务');
-      return;
-    }
-    const health = await localHealth({ localUrl: url }, { force: true });
-    if (health && health.ok) {
-      showLocalTip(`连接成功，服务内现有 ${health.notes} 篇笔记`);
-    } else {
-      showLocalTip('配置已保存，但连不上服务（请先启动 node server.mjs）', false);
-    }
-  } catch (e) {
-    showLocalTip('保存失败：' + ((e && e.message) || e), false);
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-};
 
 $('saveSettings').onclick = async () => {
   const s = {

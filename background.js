@@ -120,7 +120,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'open-big-window') openBigWindow(!!msg.reset);
   // 弹窗关闭时补推：SW 生命周期比 popup 长，防抖定时器被杀导致的最后一笔丢失
   if (msg.type === 'flush-sync') {
-    getSettings().then((s) => { if (s && (s.ak || s.localUrl)) pushAll(s); }).catch(() => {});
+    getSettings().then((s) => { if (s && s.ak) pushAll(s); }).catch(() => {});
   }
   // 页面启动兜底（v0.5.22）：页面是最可靠的"用户回来了"信号，请 SW 重建
   // 可能丢失的 alarm 并补跑一次快照。只走后台链路，不在页面直接写云；
@@ -212,7 +212,7 @@ async function syncThenCloseAppWindow(removedWinId) {
   // 这里再包一层防御；getSettings 用带内置回退的页面口径，保证在用的 profile 能推。
   try {
     const settings = await getSettings();
-    if (settings && (settings.ak || settings.localUrl)) await pushAll(settings);
+    if (settings && settings.ak) await pushAll(settings);
   } catch (_) { /* 同步失败也不阻断关窗 */ }
 
   try {
