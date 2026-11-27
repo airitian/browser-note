@@ -4,6 +4,7 @@ import {
   getGithubBackupConfig, saveGithubBackupConfig, validateRepo,
   getGithubBackupStatus, markGithubPullOk, requestFullBackup,
 } from '../lib/github-backup.js';
+import { readLiveStatus } from '../lib/live.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -75,7 +76,37 @@ chrome.storage.onChanged.addListener((changes, area) => {
   // GitHub 全量备份状态由 SW 写入，开着设置页也能实时看到手动/每日结果
   if (changes.githubBackupStatus) renderGithubBackupStatus();
   if (changes.githubBackup) refreshGithubConfigForm();
+  // 实时通道状态（推送写入 / 拉取命中与否）
+  if (changes.liveSyncStatus) renderLiveStatus();
 });
+
+// ===== 实时同步通道状态（v0.5.28）=====
+// 通道命中与否是用户判断「另一台浏览器能不能立刻看到」的唯一客观依据，
+// 必须显式呈现：pullMode='live' 说明拉取走的是实时快照（秒级可见），
+// 'fallback' 说明实时通道不可用、已退回普通索引通道（CDN 缓存，可能延迟数分钟）。
+async function renderLiveStatus() {
+  const box = $('liveStatus');
+  if (!box) return;
+  let st = {};
+  try {
+    st = await readLiveStatus();
+  } catch (_) { /* 存储不可用：展示降级文案 */ }
+  box.hidden = false;
+  const pushPart = st.pushAt
+    ? `上次推送实时快照：${absTime(st.pushAt)}`
+    : '尚未写入实时快照';
+  if (st.pullMode === 'live') {
+    box.className = 'snap-status ok';
+    box.textContent = `实时通道：正常。${pushPart}；上次拉取命中实时快照（${relTime(st.pullAt)}），另一台浏览器可秒级看到。`;
+  } else if (st.pullMode === 'fallback') {
+    box.className = 'snap-status fail';
+    box.textContent = `实时通道：已回退到普通索引通道${st.error ? '（' + st.error + '）' : ''}。${pushPart}。`
+      + '此状态下另一台浏览器可能需等待数分钟才能看到新内容。';
+  } else {
+    box.className = 'snap-status';
+    box.textContent = `实时通道：${pushPart}。下次拉取后这里会显示是否命中。`;
+  }
+}
 
 // ===== GitHub 全量备份独立卡片（v0.5.23）=====
 // 配置/状态/令牌全部走独立 storage key：设置页上方 saveSettings 构造的是固定
@@ -253,6 +284,7 @@ $('snapNow').onclick = async () => {
   refreshSnapshots();
   refreshGithubConfigForm();
   renderGithubBackupStatus();
+  renderLiveStatus();
 })();
 
 $('saveSettings').onclick = async () => {
