@@ -407,6 +407,20 @@ body.app-body.standalone { width: 100vw; height: 100vh; }
   margin-bottom: 12px;
   gap: 4px;
 }
+/* 复选框行：横排（默认 label 是竖排，勾选项竖排会很怪） */
+.settings-card label.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+.settings-card label.inline input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  accent-color: #185FA5;
+}
 .settings-card input, .settings-card select {
   border: 0.5px solid #D3D1C7;
   border-radius: 6px;

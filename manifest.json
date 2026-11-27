@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "浏览器笔记",
-  "version": "0.5.29",
-  "description": "本地优先 + 七牛云同步的笔记扩展：可缩放窗口 + 云端文章阅读",
+  "version": "0.5.30",
+  "description": "本地优先 + 本机唯一副本 + 七牛云同步的笔记扩展：可缩放窗口 + 云端文章阅读",
   "permissions": [
     "storage",
     "alarms"
@@ -13,7 +13,9 @@
     "https://rsf.qiniuapi.com/*",
     "https://rsf-na0.qiniuapi.com/*",
     "https://rs.qiniuapi.com/*",
-    "https://api.github.com/*"
+    "https://api.github.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
   ],
   "action": {
     "default_title": "浏览器笔记（点击打开窗口）"
