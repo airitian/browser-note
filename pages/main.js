@@ -192,11 +192,63 @@ function flushSyncSafe() {
   } catch (_) { /* 上下文已失效：旧页面正在关闭，静默忽略 */ }
 }
 
+// ===== 切回窗口自动拉取云端最新内容（v0.5.26）=====
+// 跨浏览器不直连：A 改完推七牛，B 要看到必须拉。此前只有「打开窗口时」和
+// 「菜单手动刷新」两个拉取点，B 窗口一直开着就永远看不到 A 的改动——用户
+// 2026-11-27 报告的场景。这里在窗口重新获得焦点/由隐藏转可见时补一次拉取。
+// 四道护栏：
+//   1) windowWasAway：只在「真正离开又回来」时触发；页面首次加载不拉
+//      （启动 IIFE 已经拉过，避免重复请求及与启动拉取竞态）
+//   2) autoPullBusy + 1.5s 节流：blur/focus 与 visibilitychange 常在同一次
+//      窗口切换里都触发，必须去重，否则一次切回打两轮云端请求
+//   3) 拉取前先落盘未保存编辑：否则 pullSync 替换 notesCache 后，下一次
+//      persist 会用旧的 currentNote 把刚拉下来的新内容覆写回去（编辑区与
+//      内存副本分裂）。persist 推本地 updatedAt 到当前，LWW 天然裁决谁生效
+//   4) 远端不可达静默返回：本地优先，拉取失败绝不打断正在编辑的用户
+let windowWasAway = false;
+let autoPullBusy = false;
+let lastAutoPullAt = 0;
+const AUTO_PULL_MIN_GAP = 1500;
+
+async function autoPullOnFocus() {
+  if (!settings || !settings.ak) return;             // 仅本地模式：无云端可拉
+  if (autoPullBusy) return;
+  const now = Date.now();
+  if (now - lastAutoPullAt < AUTO_PULL_MIN_GAP) return;
+  autoPullBusy = true;
+  lastAutoPullAt = now;
+  try {
+    if (persistTimer) await persist();                // 先落盘，保住本地未保存编辑
+    const beforeAt = currentId && notesCache[currentId] ? notesCache[currentId].updatedAt : 0;
+    const st = await pullSync(settings);              // LWW：仅覆盖 updatedAt 更新的笔记
+    if (st === 'error') return;                       // 远端不可达：静默，下次切回再试
+    notesCache = await getNotes();
+    renderList($('search').value);
+    const cur = currentId && notesCache[currentId];
+    if (cur && !cur.deleted && cur.updatedAt !== beforeAt) {
+      // 当前笔记有更新：重载编辑区让用户立刻看到另一浏览器改的内容。
+      // selectNote 对同一 id 不会再次 persist，安全。
+      await selectNote(currentId);
+    }
+  } catch (_) { /* 拉取异常不影响本地使用 */ }
+  finally { autoPullBusy = false; }
+}
+
 // 弹窗关闭/隐藏时补一次保存，并通知后台 SW 立即补推（防抖定时器随弹窗关闭会死掉）。
 // persist 的存储写入同样可能因上下文失效被拒，卸载路径上静默吞掉，不产生未处理 rejection
 window.addEventListener('pagehide', () => { persist().catch(() => {}); flushSyncSafe(); });
+window.addEventListener('blur', () => { windowWasAway = true; });
+window.addEventListener('focus', () => {
+  if (windowWasAway) { windowWasAway = false; void autoPullOnFocus(); }
+});
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') { persist().catch(() => {}); flushSyncSafe(); }
+  if (document.visibilityState === 'hidden') {
+    windowWasAway = true;
+    persist().catch(() => {}); flushSyncSafe();
+  } else if (windowWasAway) {
+    windowWasAway = false;
+    void autoPullOnFocus();
+  }
 });
 
 // 粘贴图片：行内只存"缩略图"（最长边 PASTE_THUMB_EDGE），原图（最长边 PASTE_MAX_EDGE）
@@ -388,7 +440,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.25';
+document.title = '浏览器笔记 v0.5.26';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden
