@@ -171,9 +171,58 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
+// 关闭浏览器时：先同步到七牛，再关笔记窗（v0.5.27）。
+// 笔记是 type=popup 的独立窗口；用户关掉最后一个普通浏览窗口（type=normal）后，
+// Chrome 不会退出（popup 窗仍让进程存活），笔记窗会留下。此时页面 pagehide 的
+// persist + flushSyncSafe 是否跑完并不可靠（防抖定时器随页面卸载被杀、MV3 SW
+// 可能回收）。所以在 SW 里显式做一次全量推送：await pushAll 跑完再关窗，确保
+// 最后一笔编辑先落到七牛云，避免关窗把未同步数据带走。边界：
+//   ① 关的就是笔记窗自身 → 只清 WINID_KEY，不触发同步（用户主动关，页面
+//      pagehide 已有兜底；且此时笔记窗可能已失效，推完也无处可关）；
+//   ② 还有其他 normal 窗口 → 不动，浏览器还在用；
+//   ③ 无 appWinId / getAll 抛错 → 静默空操作；
+//   ④ pushAll 内部吞掉所有错误（失败只 markPushFail），无论成功失败都继续关窗，
+//      绝不让同步失败把用户卡在孤儿窗里；getSettings 走页面同款带内置回退口径
+//      （不可用 SW 快照专用的 getStoredSettings，否则未保存过配置的 profile 不推）；
+//   ⑤ 只认 type=normal 为"浏览窗口"，devtools / 别的扩展 popup 不算，
+//      避免开着 F12 时把笔记窗误判成"浏览器还在"而漏做同步与关闭；
+//   ⑥ SW 存活：pushAll 内部连续 fetch 会不断重置 MV3 空闲计时器，撑到同步完成。
+async function syncThenCloseAppWindow(removedWinId) {
+  let appId;
+  try {
+    const s = await chrome.storage.local.get(WINID_KEY);
+    appId = s[WINID_KEY];
+  } catch (_) { return; }
+  if (appId == null) return;
+  // 笔记窗自己被关（用户点 X，或后续我们 remove 触发的回调）：清记录，不级联
+  if (appId === removedWinId) {
+    try { await chrome.storage.local.remove(WINID_KEY); } catch (_) {}
+    return;
+  }
+  let windows = [];
+  try {
+    windows = await chrome.windows.getAll();
+  } catch (_) { return; }
+  const hasBrowserWindow = (windows || []).some(
+    (w) => w && w.type === 'normal' && w.id !== removedWinId,
+  );
+  if (hasBrowserWindow) return;
+
+  // 关键顺序：先同步到七牛（await 跑完），再关笔记窗。pushAll 内部已吞错误，
+  // 这里再包一层防御；getSettings 用带内置回退的页面口径，保证在用的 profile 能推。
+  try {
+    const settings = await getSettings();
+    if (settings && settings.ak) await pushAll(settings);
+  } catch (_) { /* 同步失败也不阻断关窗 */ }
+
+  try {
+    await chrome.windows.remove(appId);
+  } catch (_) { /* 笔记窗可能已被关，或浏览器正在整体退出 */ }
+  try { await chrome.storage.local.remove(WINID_KEY); } catch (_) {}
+}
+
 chrome.windows.onRemoved.addListener(async (winId) => {
-  const s = await chrome.storage.local.get(WINID_KEY);
-  if (s[WINID_KEY] === winId) await chrome.storage.local.remove(WINID_KEY);
+  await syncThenCloseAppWindow(winId);
 });
 
 chrome.windows.onBoundsChanged.addListener(async (win) => {
