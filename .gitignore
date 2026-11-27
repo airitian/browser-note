@@ -8,3 +8,7 @@ secrets.dev.js
 
 # 工作目录数据（测试基建 / 私有记忆，不属于扩展本身）
 .workbuddy/
+
+# 扩展 ID 的 RSA 私钥（切勿入库！公钥已在 manifest.json 的 key 字段中公开）
+# 泄露私钥 = 任何人都能打包出与本扩展同 ID 的 .crx 冒充它
+.secrets/

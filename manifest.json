@@ -1,9 +1,12 @@
 {
   "manifest_version": 3,
   "name": "浏览器笔记",
-  "version": "0.5.28",
+  "version": "0.5.29",
   "description": "本地优先 + 七牛云同步的笔记扩展：可缩放窗口 + 云端文章阅读",
-  "permissions": ["storage", "alarms"],
+  "permissions": [
+    "storage",
+    "alarms"
+  ],
   "host_permissions": [
     "https://*.qiniup.com/*",
     "http://towwe5yxn.hn-bkt.clouddn.com/*",
@@ -19,5 +22,6 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "options_page": "pages/settings.html"
+  "options_page": "pages/settings.html",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm0qZvLv7lvMnIsZj/L87yWuQJ0sdJHpBNMG/KIngMWFGmRlVl/AIEF846rgSsD7s+kT/aPJ+St/4/rq7/AyFTqJqp9ANsB0fW4f/HWpAnEuQV18ujrI7rcD025ypQsvvNUNbvUvfbBeFOHxAmWER+EKZLnIny0tNpXNWiLhChbg4cEWVY1K1FZpqRHFOTSTzNJ4lM+xSkdSCoaLZtmRcOx9fH3xW4oeMY32hyPr0lWFRAM2iMQXn9mgkR/VgSE9dlQPdcq1fNyY3/0EfaDkz59OYeWyJHIUb4CYWtzjXic53GTzeOvIQKHCHJLptm93uvRD/FjEmYPPHP1463D0r/QIDAQAB"
 }

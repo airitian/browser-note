@@ -80,7 +80,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.liveSyncStatus) renderLiveStatus();
 });
 
-// ===== 实时同步通道状态（v0.5.28）=====
+// ===== 实时同步通道状态（v0.5.28 引入）=====
 // 通道命中与否是用户判断「另一台浏览器能不能立刻看到」的唯一客观依据，
 // 必须显式呈现：pullMode='live' 说明拉取走的是实时快照（秒级可见），
 // 'fallback' 说明实时通道不可用、已退回普通索引通道（CDN 缓存，可能延迟数分钟）。
