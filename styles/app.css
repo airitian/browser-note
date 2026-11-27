@@ -422,6 +422,11 @@ body.app-body.standalone { width: 100vw; height: 100vh; }
   font-size: 13px;
 }
 .saved-tip { font-size: 12px; color: #0F6E56; text-align: center; margin-top: 8px; }
+/* 自动快照留痕（v0.5.22）：成功绿、失败红。只设颜色/字号，绝不设 display——
+   [hidden] 黑屏防线：作者样式一旦给带 hidden 的元素设 display 会整页黑屏 */
+.snap-status { font-size: 12px; margin: 0 0 12px; line-height: 1.5; }
+.snap-status.ok { color: #0F6E56; }
+.snap-status.fail { color: #A32D2D; }
 .snap-row {
   display: flex;
   align-items: center;

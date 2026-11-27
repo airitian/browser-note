@@ -373,7 +373,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.21';
+document.title = '浏览器笔记 v0.5.22';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden
@@ -788,6 +788,13 @@ onNotesChanged((newVal) => {
     const res = await chrome.runtime.sendMessage({ type: 'one-time-wipe' });
     wipedNow = !!(res && res.wiped);
   } catch (_) { /* 断网等情况：保持原样，下次重试 */ }
+  // 自动快照定时器自愈（v0.5.22）：扩展更新/SW 冷启动偶发导致 alarm 丢失，
+  // 页面启动是最可靠的"用户回来了"信号，请 SW 重建定时器并按需补跑快照。
+  // 这里不发任何云端请求、不直接写云——闸门与留痕全在 SW（见 background.js）
+  try {
+    const p = chrome.runtime.sendMessage({ type: 'ensure-alarms' });
+    if (p && typeof p.catch === 'function') p.catch(() => { /* SW 未就绪不影响本地 */ });
+  } catch (_) { /* 同上 */ }
   await loadSettings();
   notesCache = await getNotes();
   // 启动时清洗全部笔记内容（历史脏内容/外来浮层自动修复），有改动则落盘

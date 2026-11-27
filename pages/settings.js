@@ -28,6 +28,47 @@ function showSnapTip(text) {
   showSnapTip._t = setTimeout(() => { tip.hidden = true; }, 4000);
 }
 
+// 自动快照留痕（v0.5.22）：后台每次尝试都写 chrome.storage.local.autoSnapshotStatus
+// = {at, ok, reason, trigger, snapshotAt}。历史事故：v0.5.21 及以前后台取不到配置
+// 或闸门未过时直接静默跳过，用户只看到"快照一直没有"却无从排查；这里把成功时间
+// 与失败/跳过原因直接摆出来，用户可自查"自动快照到底跑没跑、为什么没跑"。
+function snapTriggerText(trigger) {
+  return trigger === 'alarm' ? '定时' : trigger === 'startup' ? '启动补跑' : '后台';
+}
+
+async function renderAutoSnapStatus() {
+  const box = $('autoSnapStatus');
+  if (!box) return; // 老版本 HTML 缺元素时不打断初始化
+  let r = {};
+  try {
+    r = await chrome.storage.local.get(['autoSnapshotStatus', 'lastSnapshotAt']);
+  } catch (_) { /* 存储不可用：展示降级文案，不抛错 */ }
+  const st = r.autoSnapshotStatus;
+  const last = r.lastSnapshotAt || 0;
+  box.hidden = false;
+  if (!st || typeof st.at !== 'number') {
+    box.className = 'snap-status';
+    box.textContent = '自动快照：尚无运行记录（每小时一次，浏览器启动也会补跑）。';
+    return;
+  }
+  const when = absTime(st.at);
+  const trigger = snapTriggerText(st.trigger);
+  if (st.ok) {
+    box.className = 'snap-status ok';
+    box.textContent = `上次自动快照：${absTime(st.snapshotAt || st.at)}（${trigger}，尝试于 ${when}）`
+      + (last ? `；最近一次快照（含手动）：${absTime(last)}` : '');
+  } else {
+    box.className = 'snap-status fail';
+    box.textContent = `上次自动快照失败：${st.reason || '未知原因'}（${when}，${trigger}）`
+      + (last ? `；最近一次成功快照：${absTime(last)}` : '；尚无成功快照');
+  }
+}
+
+// 后台写入状态时实时刷新，用户开着设置页也能看到自动快照的结果
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.autoSnapshotStatus) renderAutoSnapStatus();
+});
+
 // 渲染快照列表（新→旧，最多 30 条）。无密钥/无快照/拉取失败都有明确空态。
 // listSnapshots 已合并本地 pending（CDN 延迟期间刚建的快照）——这里只负责
 // 把 pending 条目标出来（「生效中」+ 回退按钮 title 说明），让用户知道
@@ -105,6 +146,7 @@ $('snapNow').onclick = async () => {
     showSnapTip('创建失败：' + (err && err.message ? err.message : err));
   }
   refreshSnapshots();
+  renderAutoSnapStatus(); // 手动快照会更新 lastSnapshotAt，状态栏同步刷新
 };
 
 (async () => {
@@ -114,6 +156,7 @@ $('snapNow').onclick = async () => {
   $('bucket').value = s.bucket || '';
   $('domain').value = s.domain || '';
   $('region').value = s.region || 'z2';
+  renderAutoSnapStatus();
   refreshSnapshots();
 })();
 

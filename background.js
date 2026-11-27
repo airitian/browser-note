@@ -12,6 +12,16 @@ const DEFAULT = { width: 600, height: 400 };
 // 只对"无位置记忆"的新窗生效；用户手动拖过窗口后按记忆位置打开，不再偏移
 const OFFSET_X = 100;
 
+// 自动快照留痕键（v0.5.22）：每次后台尝试都写一条
+// {at, ok, reason, trigger, snapshotAt}，由设置页「数据回退」卡片渲染。
+// 历史事故（2026-10-15 用户报告）：v0.5.21 及以前后台取不到配置或闸门未过时
+// 直接 return，catch 也把过程吞掉——用户只看到"自动快照一直没有"，却查不到
+// 任何线索，连"到底跑没跑"都无法自证。失败必须可见，这是本次修复的硬要求。
+const AUTO_SNAP_STATUS_KEY = 'autoSnapshotStatus';
+// 启动补跑与 alarm 可能在 SW 同一次唤醒里并发；共享同一次执行，避免
+// 同秒双快照互相覆盖（snapStamp 精确到秒）
+let autoSnapshotRunning = null;
+
 let saveTimer = null;
 
 // 读取记忆的窗口参数：尺寸缺失或小得离谱（<600×400，属历史脏数据）则回默认；
@@ -111,6 +121,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'flush-sync') {
     getSettings().then((s) => { if (s && s.ak) pushAll(s); }).catch(() => {});
   }
+  // 页面启动兜底（v0.5.22）：页面是最可靠的"用户回来了"信号，请 SW 重建
+  // 可能丢失的 alarm 并补跑一次快照。只走后台链路，不在页面直接写云；
+  // ensurePulled 闸门与 in-flight 守卫仍在 SW 内，安全语义不变
+  if (msg.type === 'ensure-alarms') {
+    safeEnsureAlarm();
+    // 清空若正在飞行中，等它完成再补跑——否则会给"即将被清空的数据"做快照
+    const running = awaitWipeIfRunning();
+    if (running) running.then(() => ensureSnapshotFresh(), () => {});
+    else ensureSnapshotFresh();
+  }
   // 一次性清空（P1 修复后）：本消息【只等待、不触发】——清空执行权只保留在
   // onInstalled(reason=update)/onStartup 两个 SW 生命周期事件，页面加载不再
   // 触发清空。旧语义"页面加载即触发一次 wipe 检查"是漏戳误清的放大面：
@@ -159,37 +179,142 @@ chrome.windows.onBoundsChanged.addListener(async (win) => {
 
 // 每日备份（近 7 天）调度：周期 1440 分钟，SW 在后台唤醒时执行
 // 每小时全量快照（数据回退用，v0.5.14）：周期 60 分钟，SW 唤醒时执行
+// 定时器重建（v0.5.22）：旧版两处缺陷——① 调用方未 await，SW 冷启动可能在
+// create 完成前被回收，alarm 静默丢失，自动快照/备份再也不触发；② 只判断
+// "是否存在"，旧版本残留的错误周期不会被纠正。现在两个 alarm 都校验周期，
+// 缺失/漂移即重建；调用方一律 await，并在 alarm 事件与页面启动时再次自愈。
 async function ensureAlarm() {
-  const existing = await chrome.alarms.get('dailyBackup');
-  if (!existing) chrome.alarms.create('dailyBackup', { periodInMinutes: 1440 });
+  const daily = await chrome.alarms.get('dailyBackup');
+  if (!daily || daily.periodInMinutes !== 1440) {
+    await chrome.alarms.create('dailyBackup', { periodInMinutes: 1440 });
+  }
   const snap = await chrome.alarms.get('hourlySnapshot');
-  if (!snap) chrome.alarms.create('hourlySnapshot', { periodInMinutes: 60 });
+  if (!snap || snap.periodInMinutes !== 60) {
+    await chrome.alarms.create('hourlySnapshot', { periodInMinutes: 60 });
+  }
 }
 
-// SW 侧读取【显式存储】的 settings——不走 getSettings() 的 DEFAULT_SETTINGS
-// 回退。原因：DEFAULT_SETTINGS 内置了开发者自己的七牛密钥（config.js 既定
-// 设计，个人自用），一个从未配置过密钥的 profile（全新安装 / 测试 profile）
-// 在浏览器启动瞬间就会拿内置密钥同步——拉别人的云端数据进本地、还往上写
-// 快照。设置页对用户的承诺是「不配置则仅本地保存」，SW 必须守住了。
-// 页面侧（main.js 启动 IIFE）不受影响：那里的 settings 经 addInitScript 种子
-// 或用户保存，ak 为空即整块跳过；此处是 SW 生命周期早于任何页面的兜底路径
-// 同样做旧端点迁移（历史配置里的 na0/旧域名不能带进快照链路）。
+// 定时器 API 异常不能阻断清空/快照主流程，但必须留痕（不再是彻底静默）
+async function safeEnsureAlarm() {
+  try { await ensureAlarm(); }
+  catch (e) { console.warn('[browser-note] 重建定时 alarm 失败：' + ((e && e.message) || e)); }
+}
+
+// SW 侧读取【显式保存】的 settings（与页面 getSettings 的内置回退相区分）。
+// 历史背景：这里刻意不回退 DEFAULT_SETTINGS，是为了防止从未配置过的 profile
+// 在浏览器启动瞬间拿内置密钥同步（拉别人云端数据进本地、还往上写快照）。
+// v0.5.22 修正：仅"显式保存过"的 profile 走这里；从未保存过、但本地已有笔记
+// 的在用 profile 走下方 getSnapshotSettings 的受限回退——解决"密钥只写在
+// gitignore 的 config.js、从没点过设置页保存 → 后台两条路径永远拿空配置"
+// 的静默失效（2026-10-15 用户报告）。
+// 旧端点迁移照旧（na0/旧域名不能带进快照链路）。
 async function getStoredSettings() {
   const r = await chrome.storage.local.get('settings');
   return r.settings ? migrateStoredSettings(r.settings) : null;
 }
 
+// 自动快照专用配置解析（v0.5.22）：
+//  1) 用户显式保存过 settings → 原样尊重；ak 为空即视为"主动关闭同步"，不回退，
+//     否则会把用户明确关掉的同步又用内置密钥打开；
+//  2) 从未保存过 → 只有本地已有笔记（证明是在用的旧 profile，而非全新安装/
+//     测试 profile）才回退 getSettings() 的内置密钥，与页面启动口径一致；
+//     本地为空直接跳过，连网络请求都不发，守住"不配置则仅本地保存"的承诺。
+// 安全检查全部留在 createSnapshot 内部（ensurePulled 先拉后写、本地为空不写），
+// 这里只决定"用哪套配置"，绝不绕过闸门。
+async function getSnapshotSettings() {
+  const explicit = await getStoredSettings();
+  if (explicit) {
+    return {
+      settings: explicit.ak ? explicit : null,
+      source: explicit.ak ? 'stored' : 'disabled',
+    };
+  }
+  const local = await chrome.storage.local.get('notes');
+  if (!local.notes || typeof local.notes !== 'object' || !Object.keys(local.notes).length) {
+    return { settings: null, source: 'empty-local' };
+  }
+  const fallback = await getSettings();
+  return fallback && fallback.ak
+    ? { settings: fallback, source: 'builtin' }
+    : { settings: null, source: 'no-key' };
+}
+
+// 自动快照留痕（v0.5.22）：成功/失败/跳过都落一条状态，设置页可读。
+// 写入失败只打 console.warn——留痕本身是保险，绝不能反过来阻断快照主流程。
+async function recordAutoSnapshot({ ok, reason, trigger, snapshotAt }) {
+  const status = {
+    at: Date.now(),
+    ok: !!ok,
+    reason: reason || '',
+    trigger: trigger || '',
+    snapshotAt: snapshotAt || 0,
+  };
+  try {
+    await chrome.storage.local.set({ [AUTO_SNAP_STATUS_KEY]: status });
+  } catch (e) {
+    console.warn('[browser-note] 自动快照状态写入失败：' + ((e && e.message) || e));
+  }
+}
+
+async function doRunAutoSnapshot(trigger) {
+  let ok = false;
+  let reason = '';
+  let snapshotAt = 0;
+  try {
+    const { settings, source } = await getSnapshotSettings();
+    if (!settings) {
+      // 跳过也留痕：用户能从设置页看到"为什么没有自动快照"，而不是一片空白
+      reason = source === 'empty-local'
+        ? '本地暂无笔记，跳过（全新浏览器或尚未使用）'
+        : source === 'disabled' ? '已保存空配置，视为关闭同步，跳过'
+          : '未配置七牛密钥，跳过';
+    } else {
+      // onSkip 只回填原因，不改变 createSnapshot 的返回契约（跳过仍返回 null）。
+      // ensurePulled 闸门原样留在 sync.js：lastPullAt 被域名迁移清掉时会先拉一次，
+      // 远端不可达则 'error' 暂停并在此留痕，绝不落戳绕过安全语义。
+      let skipReason = '';
+      const r = await createSnapshot(settings, {
+        auto: true,
+        onSkip: (why) => { skipReason = why || ''; },
+      });
+      if (r) {
+        ok = true;
+        snapshotAt = r.at;
+      } else {
+        reason = skipReason || '快照被跳过（本地为空或未完成首次拉取）';
+      }
+    }
+  } catch (e) {
+    // 上传/签名/网络异常：明确原因，不再吞掉
+    reason = '快照失败：' + ((e && e.message) || e);
+  }
+  await recordAutoSnapshot({ ok, reason, trigger, snapshotAt });
+}
+
+function runAutoSnapshot(trigger) {
+  if (autoSnapshotRunning) return autoSnapshotRunning;
+  autoSnapshotRunning = doRunAutoSnapshot(trigger).finally(() => { autoSnapshotRunning = null; });
+  return autoSnapshotRunning;
+}
+
 // 启动补跑：距上次快照 >50 分钟则立即补一份。定时 alarm 在浏览器关闭期间
 // 不触发，开机首次启动兜底（与 createSnapshot 内部闸门叠加，双保险）。
 // 放在 oneTimeWipe 之后调用——wipe 成功时本地已空，createSnapshot 自然跳过
+// （跳过原因同样写进 autoSnapshotStatus，不再无声无息）。
 async function ensureSnapshotFresh() {
   try {
     const r = await chrome.storage.local.get('lastSnapshotAt');
     if (Date.now() - (r.lastSnapshotAt || 0) > 50 * 60 * 1000) {
-      const s = await getStoredSettings();
-      if (s && s.ak) await createSnapshot(s, { auto: true });
+      await runAutoSnapshot('startup');
     }
-  } catch (_) { /* 快照失败不影响启动主流程 */ }
+  } catch (e) {
+    // 读取存储失败也应留痕：快照链路整体不可用，不能假装一切正常
+    await recordAutoSnapshot({
+      ok: false,
+      reason: '启动补跑读取失败：' + ((e && e.message) || e),
+      trigger: 'startup',
+    });
+  }
 }
 
 // ===== 一次性彻底清空（v0.3.0 重置）：本地 + 云端全部数据 =====
@@ -204,7 +329,7 @@ async function ensureSnapshotFresh() {
 //   （见 onMessage 处注释），过期戳数据存活到下次浏览器启动才清，宁可晚清不可误清。
 // 全新安装（reason=install）不清云端：保留云端数据，重装后可恢复
 chrome.runtime.onInstalled.addListener(async (details) => {
-  ensureAlarm();
+  await safeEnsureAlarm();
   try {
     if (details.reason === 'update') {
       await oneTimeWipe();
@@ -220,18 +345,18 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 });
 
 chrome.runtime.onStartup.addListener(async () => {
-  ensureAlarm();
+  await safeEnsureAlarm();
   try { await oneTimeWipe(); } catch (_) { /* 已打戳则无事发生；失败则下次重试 */ }
   await ensureSnapshotFresh();
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  // alarm 事件本身就是 SW 被唤醒的证据：顺手自愈被旧版本/异常弄丢的定时器
+  await safeEnsureAlarm();
   if (alarm.name === 'hourlySnapshot') {
-    // 同上：只认显式配置的密钥，不用 DEFAULT_SETTINGS 回退
-    const s = await getStoredSettings();
-    if (s && s.ak) {
-      try { await createSnapshot(s, { auto: true }); } catch (_) { /* 快照失败不影响其他 alarm */ }
-    }
+    // v0.5.22：与启动补跑同口径（显式配置优先 + 在用 profile 受限回退），
+    // 失败/跳过全部留痕，不再静默 return
+    await runAutoSnapshot('alarm');
     return;
   }
   if (alarm.name !== 'dailyBackup') return;
