@@ -29,7 +29,7 @@ SHA-256 派生值，挪目录就会换一个身份；`key` 字段就是为了消
 | 笔记与配置 | `<profile>/Default/Local Extension Settings/<旧ID>/` | 复制为同名 `<新ID>/` 目录 |
 | 原始备份 | `C:\ProgramData\BrowserNote-QA\migration-backup\` | 迁移前逐 profile 留档 |
 | 七牛 AK/SK | `lib/config.js` | 随代码迁移（本来就没写进浏览器存储） |
-| 扩展 ID 私钥 | `.secrets/browser-note-extid-private.pem` | 随目录迁移，**不入库**（公钥已在 `manifest.json`） |
+| 扩展 ID 私钥 | `C:\ProgramData\BrowserNote-QA\extid-secrets\`（**扩展目录之外**） | 不入库；公钥已在 `manifest.json` |
 
 原理：Chrome 的扩展存储 LevelDB **不在键里带扩展 ID**（已逐字节核对过），所以整目录
 改名即可被新 ID 的扩展直接读取；迁移脚本 `.workbuddy/qa-2026-10-16/probe-id-migration.mjs`

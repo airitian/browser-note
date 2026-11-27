@@ -11,4 +11,7 @@ secrets.dev.js
 
 # 扩展 ID 的 RSA 私钥（切勿入库！公钥已在 manifest.json 的 key 字段中公开）
 # 泄露私钥 = 任何人都能打包出与本扩展同 ID 的 .crx 冒充它
+# 现已移出扩展目录（放在 C:\ProgramData\BrowserNote-QA\extid-secrets\），
+# 因为 Chrome 加载扩展时发现扩展目录内有 .pem 私钥会弹警告并劝阻加载。
+# 这条规则保留作保险：万一有人又把私钥拷回扩展目录，别让它进版本库。
 .secrets/
