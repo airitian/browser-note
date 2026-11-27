@@ -15,6 +15,30 @@ SHA-256 派生值，挪目录就会换一个身份；`key` 字段就是为了消
 > 换机器或重装时，请保留 `manifest.json` 里的 `key` 字段，否则会生成新的扩展 ID，
 > 浏览器会把它当成另一个扩展（本地数据读不到，需从云端重新拉取）。
 
+### 从旧目录迁移过来的浏览器配置（2026-11-27）
+
+旧目录 `C:\Users\Administrator\WorkBuddy\2026-10-15-21-22-04` 加载时，扩展 ID 是
+**按加载路径派生的** `glmjdndlabcdicfkadfccmmihfdonbbh`；加 `key` 字段后 ID 变成
+`iegbjdleibikahhppjcdkefbonldfpap`。ID 变了，浏览器就把它当成**另一个扩展**，
+`chrome.storage.local` 里的笔记、七牛同步状态、GitHub 备份配置（含 PAT）全都读不到。
+
+已做的搬迁（四个浏览器 profile 全覆盖：Chrome / Chrome Beta / Chrome Dev / Edge）：
+
+| 内容 | 位置 | 处理 |
+|---|---|---|
+| 笔记与配置 | `<profile>/Default/Local Extension Settings/<旧ID>/` | 复制为同名 `<新ID>/` 目录 |
+| 原始备份 | `C:\ProgramData\BrowserNote-QA\migration-backup\` | 迁移前逐 profile 留档 |
+| 七牛 AK/SK | `lib/config.js` | 随代码迁移（本来就没写进浏览器存储） |
+| 扩展 ID 私钥 | `.secrets/browser-note-extid-private.pem` | 随目录迁移，**不入库**（公钥已在 `manifest.json`） |
+
+原理：Chrome 的扩展存储 LevelDB **不在键里带扩展 ID**（已逐字节核对过），所以整目录
+改名即可被新 ID 的扩展直接读取；迁移脚本 `.workbuddy/qa-2026-10-16/probe-id-migration.mjs`
+用两个临时扩展做了 A→B 的实证，`probe-id-migration-real.mjs` 用四个真实 profile 复验，
+结果均为「笔记与配置完整读出」。
+
+> ⚠️ 手动删旧扩展会连同旧 ID 的存储目录一起删掉。**先加载新目录的扩展，确认笔记与设置
+> 都在，再去删除旧的那个**；备份在 `migration-backup`，删错了也能还原。
+
 ## 功能特性
 
 - **独立大窗口**：点击工具栏图标打开可自由拖拽、缩放的窗口（非系统弹窗），位置与尺寸自动记忆，可一键重置
