@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <link rel="stylesheet" href="../styles/app.css?v=0.5.22">
+  <link rel="stylesheet" href="../styles/app.css?v=0.5.23">
 </head>
 <body class="settings-body">
   <div class="settings-card">
@@ -26,6 +26,21 @@
     <p class="hint">打开方式：浏览器右上角扩展图标 → 右键 →「选项」。</p>
   </div>
   <div class="settings-card">
+    <h2>GitHub 全量备份（第三副本）</h2>
+    <p class="hint">把笔记 Markdown（含元数据）+ 原图全量镜像到你的 GitHub <b>私有</b>仓库，历史靠 git 提交追溯。仅「立即全量备份」手动触发，以及每天首次打开笔记且七牛拉取成功后自动跑一次（内容无差异不产生提交）。只推不拉、明文存储，本期不提供导入工具。</p>
+    <label>Fine-grained PAT（只勾该仓库 Contents 读写）
+      <input id="ghToken" type="password" autocomplete="new-password" placeholder="已配置则留空，不修改">
+    </label>
+    <label>仓库所有者 (Owner)<input id="ghOwner" autocomplete="off" placeholder="用户名或组织"></label>
+    <label>私有仓库名 (Repo)<input id="ghRepo" autocomplete="off"></label>
+    <label>设备名（可选）<input id="ghDeviceName" autocomplete="off" placeholder="留空用随机设备 ID"></label>
+    <button id="ghSaveConfig">保存 GitHub 备份配置</button>
+    <div id="ghSavedTip" class="saved-tip" hidden></div>
+    <div id="ghStatus" class="snap-status" hidden></div>
+    <button id="ghBackupNow">立即全量备份</button>
+    <div id="ghBackupTip" class="saved-tip" hidden></div>
+  </div>
+  <div class="settings-card">
     <h2>数据回退</h2>
     <p class="hint">每小时自动在云端保存一份全量快照（保留 7 天可选）。回退会把笔记恢复到所选时间点的状态；当前数据会先自动存为快照，可随时再回退回来。新建快照后列表可能有几分钟延迟（云端 CDN 缓存），重开本页即可。</p>
     <div id="autoSnapStatus" class="snap-status" hidden></div>
@@ -33,6 +48,6 @@
     <div id="snapTip" class="saved-tip" hidden></div>
     <div id="snapList"></div>
   </div>
-  <script type="module" src="../pages/settings.js?v=0.5.22"></script>
+  <script type="module" src="../pages/settings.js?v=0.5.23"></script>
 </body>
 </html>

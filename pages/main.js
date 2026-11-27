@@ -3,6 +3,7 @@ import {
 } from '../lib/storage.js';
 import { Editor, sanitizeContent, NOTE_IMG_STYLE } from '../lib/editor.js';
 import { scheduleSync, pullSync, pushAll, recordChange, fetchChangelog, maybeBackup, listSnapshots, rollbackTo, addPendingSnapshot } from '../lib/sync.js';
+import { markGithubPullOk, requestFullBackup } from '../lib/github-backup.js';
 import { fetchVideoNoteList, loadVideoNoteTitles, fetchVideoNote, renderArticleContent } from '../lib/articles.js';
 import { jsonBlockHtml, codeBlockHtml } from '../lib/codeblock.js';
 
@@ -373,7 +374,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 窗口标题带版本号（独立大窗的标题栏可直接看到，用于确认是否重新加载）
-document.title = '浏览器笔记 v0.5.22';
+document.title = '浏览器笔记 v0.5.23';
 
 // ===== 图片查看器：点击图片 → 放大查看（Esc / 点击关闭）=====
 // 注意：用 style.display 控制显隐，不可用 hidden 属性——行内 display:flex 会压过 hidden
@@ -850,7 +851,17 @@ onNotesChanged((newVal) => {
     // 没拉取过的浏览器本地视图不完整，其备份会覆写云端更完整的当天备份。
     // backupRecent/recordChange 内部另有同款 ensurePulled 闸门兜底 SW 定时路径
     if (pulledOk) {
+      // 拉取成功信号落持久化戳：原 pulledOk 只是本 IIFE 的局部变量，SW 完全看不到，
+      // 后台路径可能在未拉取的浏览器上写云。github-backup.js 里还会用 resetStampAt
+      // 让清空前的旧戳作废——清空后必须重新拉取再备份。
+      try { await markGithubPullOk(); } catch (_) { /* 标记失败不阻塞启动 */ }
       try { await maybeBackup(settings); } catch (_) { /* 忽略：备份失败不阻塞启动 */ }
+      // GitHub 每日全量兜底（v0.5.23）：① 只在 pulledOk 之后触发；② 内部按 UTC
+      // 自然日键 githubBackupLastFullDate 去重，两台设备同日同内容靠 tree 比对
+      // 零提交；③ 失败不标日期，下次打开自动重试。
+      // 不 await：Git Data 流程交给 SW 执行，页面先完成 UI 初始化；发消息本身
+      // 已整体兜底（扩展重载时 sendMessage 同步抛异常不会变成 Uncaught Error）。
+      try { void requestFullBackup('daily'); } catch (_) { /* 同上：不阻塞启动 */ }
     }
   }
   // 墓碑回收：清空/删除后可能从云端并入带 deleted 标记的空笔记，本地直接剔除

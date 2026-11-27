@@ -3,6 +3,7 @@
 // 改为独立窗口（chrome.windows.create type=popup）：可自由拖拽调整，位置可编程控制。
 import { getSettings, migrateStoredSettings } from './lib/storage.js';
 import { backupRecent, pushAll, createSnapshot, oneTimeWipe, awaitWipeIfRunning, WIPE_STAMP } from './lib/sync.js';
+import { runFullBackup } from './lib/github-backup.js';
 
 const BIG_URL = chrome.runtime.getURL('pages/main.html?mode=window');
 const BOUNDS_KEY = 'windowBounds';
@@ -151,6 +152,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     } else {
       try { sendResponse({ ok: true, wiped: false, waited: false }); } catch (_) { /* 页面已关闭 */ }
     }
+    return true;
+  }
+  // GitHub 私有仓库全量备份（v0.5.23）：页面只发触发消息，Git Data 流程在 SW 执行。
+  // 与 one-time-wipe 同款异步响应通道——SW 在 sendResponse 前不会被回收，
+  // 避免"关窗丢数据"；模块内单飞守卫让手动/每日同秒触发共享一次执行。
+  // 失败一律在 github-backup.js 内写状态且不标日期，下次打开自动重试。
+  if (msg.type === 'github-full-backup') {
+    const trigger = msg.trigger === 'daily' ? 'daily' : 'manual';
+    runFullBackup({ trigger }).then(
+      (r) => { try { sendResponse(r || { ok: false, reason: '后台无结果' }); } catch (_) { /* 页面已关闭 */ } },
+      (e) => {
+        try { sendResponse({ ok: false, reason: '后台异常：' + String((e && e.message) || e) }); }
+        catch (_) { /* 页面已关闭 */ }
+      }
+    );
     return true;
   }
 });

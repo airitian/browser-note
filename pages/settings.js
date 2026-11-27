@@ -1,5 +1,9 @@
 import { getSettings, saveSettings } from '../lib/storage.js';
 import { pullSync, createSnapshot, listSnapshots, rollbackTo, addPendingSnapshot } from '../lib/sync.js';
+import {
+  getGithubBackupConfig, saveGithubBackupConfig, validateRepo,
+  getGithubBackupStatus, markGithubPullOk, requestFullBackup,
+} from '../lib/github-backup.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -66,8 +70,97 @@ async function renderAutoSnapStatus() {
 
 // 后台写入状态时实时刷新，用户开着设置页也能看到自动快照的结果
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.autoSnapshotStatus) renderAutoSnapStatus();
+  if (area !== 'local') return;
+  if (changes.autoSnapshotStatus) renderAutoSnapStatus();
+  // GitHub 全量备份状态由 SW 写入，开着设置页也能实时看到手动/每日结果
+  if (changes.githubBackupStatus) renderGithubBackupStatus();
+  if (changes.githubBackup) refreshGithubConfigForm();
 });
+
+// ===== GitHub 全量备份独立卡片（v0.5.23）=====
+// 配置/状态/令牌全部走独立 storage key：设置页上方 saveSettings 构造的是固定
+// 五字段整体覆盖，七牛配置一旦与 GitHub 配置同键保存就会被擦掉；SW 的
+// getSnapshotSettings() 还依赖 settings.ak 空 = 主动关闭语义，更不能混写。
+function flashGhTip(tip, text, ok) {
+  if (!tip) return;
+  tip.textContent = text;
+  tip.className = ok ? 'saved-tip' : 'snap-status fail';
+  tip.hidden = false;
+  // 计时器挂在各自元素上：两个提示区若共用一个 timer，后一条会取消前一条的
+  // 隐藏回调，导致前一条永远留在页面上（历史 saved/snapTip 也踩过同类坑）
+  clearTimeout(tip._hideTimer);
+  tip._hideTimer = setTimeout(() => { tip.hidden = true; }, 6000);
+}
+
+function showGhSavedTip(text, ok = true) {
+  flashGhTip($('ghSavedTip'), text, ok);
+}
+
+function showGhBackupTip(text, ok = true) {
+  flashGhTip($('ghBackupTip'), text, ok);
+}
+
+// 令牌字段永不回显已存值：只填占位说明，留空保存即保持原令牌。
+// 明文 PAT 一旦渲染进 DOM（哪怕 type=password）就是多一个肩窥/截图外泄面。
+async function refreshGithubConfigForm() {
+  const owner = $('ghOwner');
+  const repo = $('ghRepo');
+  const deviceName = $('ghDeviceName');
+  const token = $('ghToken');
+  if (!owner || !repo || !deviceName || !token) return;
+  let cfg;
+  try {
+    cfg = await getGithubBackupConfig();
+  } catch (_) { return; }
+  owner.value = cfg.owner || '';
+  repo.value = cfg.repo || '';
+  deviceName.value = cfg.deviceName || '';
+  token.value = '';
+  token.placeholder = cfg.token ? '已配置，留空则不修改' : '粘贴 fine-grained PAT';
+}
+
+async function renderGithubBackupStatus() {
+  const box = $('ghStatus');
+  if (!box) return;
+  let data = { status: null, lastDate: '' };
+  try {
+    data = await getGithubBackupStatus();
+  } catch (_) { /* 存储不可用：展示降级文案，不抛错 */ }
+  const st = data.status;
+  box.hidden = false;
+  if (!st || typeof st.at !== 'number') {
+    box.className = 'snap-status';
+    box.textContent = 'GitHub 全量备份：尚无运行记录。保存配置后可手动触发，或等每日首次打开自动执行。';
+    return;
+  }
+  const when = absTime(st.at);
+  if (st.running) {
+    // MV3 可能在长流程中回收 SW：停在 running 就是中断信号，不伪装成成功
+    box.className = 'snap-status';
+    box.textContent = `GitHub 全量备份进行中（开始于 ${when}）…若长时间不更新，`
+      + '可能已被浏览器中断，下次打开笔记会自动重试。';
+    return;
+  }
+  const skippedCount = st.skippedAssetCount || (st.skippedAssets ? st.skippedAssets.length : 0);
+  const skipped = skippedCount
+    ? '；跳过原图 ' + skippedCount + ' 张：'
+      + (st.skippedAssets || []).slice(0, 5)
+        .map((s) => s.name + '（' + s.reason + '）').join('、')
+    : '';
+  if (st.ok) {
+    box.className = 'snap-status ok';
+    box.textContent = `上次全量备份成功：${when}（${st.trigger === 'daily' ? '每日自动' : '手动'}，`
+      + `${st.noteCount || 0} 篇 / ${st.assetCount || 0} 张原图，`
+      + `${st.committed ? '已提交' : '内容无差异未提交'}）`
+      + (st.reason ? '；' + st.reason : '') + skipped
+      + (data.lastDate ? `；UTC ${data.lastDate} 已执行` : '');
+  } else {
+    box.className = 'snap-status fail';
+    box.textContent = `上次全量备份失败：${st.reason || '未知原因'}（${when}）`
+      + (/令牌失效|401|403/.test(st.reason || '') ? '，请重新配置 fine-grained PAT' : '')
+      + skipped;
+  }
+}
 
 // 渲染快照列表（新→旧，最多 30 条）。无密钥/无快照/拉取失败都有明确空态。
 // listSnapshots 已合并本地 pending（CDN 延迟期间刚建的快照）——这里只负责
@@ -158,6 +251,8 @@ $('snapNow').onclick = async () => {
   $('region').value = s.region || 'z2';
   renderAutoSnapStatus();
   refreshSnapshots();
+  refreshGithubConfigForm();
+  renderGithubBackupStatus();
 })();
 
 $('saveSettings').onclick = async () => {
@@ -182,4 +277,111 @@ $('saveSettings').onclick = async () => {
   tip.hidden = false;
   setTimeout(() => (tip.hidden = true), 1500);
   refreshSnapshots();
+};
+
+// GitHub 配置独立保存按钮：独立校验，绝不走上方固定五字段的 saveSettings。
+// 校验失败不保存、不反复弹窗——只用行内 tip 且按钮在途禁用（节流）。
+let ghSaveBusy = false;
+$('ghSaveConfig').onclick = async () => {
+  if (ghSaveBusy) return;
+  const btn = $('ghSaveConfig');
+  const token = $('ghToken').value.trim();
+  const owner = $('ghOwner').value.trim();
+  const repo = $('ghRepo').value.trim();
+  const deviceName = $('ghDeviceName').value.trim();
+  let cur;
+  try {
+    cur = await getGithubBackupConfig();
+  } catch (e) {
+    showGhSavedTip('读取本地配置失败：' + ((e && e.message) || e), false);
+    return;
+  }
+  if (!owner || !repo || !/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
+    showGhSavedTip('Owner / Repo 只能含字母、数字、点、下划线、连字符，且不能为空', false);
+    return;
+  }
+  if (!token && !cur.token) {
+    showGhSavedTip('请填写 GitHub fine-grained PAT（只勾该仓库 Contents 读写）', false);
+    return;
+  }
+  ghSaveBusy = true;
+  btn.disabled = true;
+  try {
+    const realToken = token || cur.token;
+    const check = await validateRepo(realToken, owner, repo);
+    // 保存令牌只在校验通过后进行：仓库非私有 / 401 / 403 一律不落盘
+    await saveGithubBackupConfig({
+      token: realToken, owner, repo, deviceName, branch: check.defaultBranch,
+    });
+    // 配置保存后仍需七牛拉取成功才允许备份。这里主动拉一次（只拉不推），
+    // 成功落 lastPullAt + 独立 githubBackupPullOkAt；失败不标戳、不阻塞保存。
+    let pulled = false;
+    const s = await getSettings();
+    if (s.ak) {
+      try {
+        const st = await pullSync(s);
+        if (st !== 'error') {
+          await chrome.storage.local.set({ lastPullAt: Date.now() });
+          pulled = true;
+        }
+      } catch (_) { /* 拉取异常按失败处理：不标戳 */ }
+    }
+    if (pulled) await markGithubPullOk();
+    showGhSavedTip(pulled
+      ? '配置已保存，拉取成功，可立即全量备份'
+      : '配置已保存，但七牛拉取未成功，备份暂缓（打开笔记页会自动重试拉取）', true);
+  } catch (e) {
+    const kind = e && e.kind;
+    const msg = kind === 'auth'
+      ? '令牌失效或权限不足（401/403），请重新生成 fine-grained PAT（只勾该仓库 Contents 读写）'
+      : kind === 'private'
+        ? '该仓库不是私有仓库，已拒绝保存：明文笔记不能推到公开仓库'
+        : kind === 'network'
+          ? '校验失败：网络不可达，请稍后重试（配置未保存）'
+          : '校验失败：' + ((e && e.message) || e);
+    showGhSavedTip(msg, false);
+  } finally {
+    ghSaveBusy = false;
+    btn.disabled = false;
+    refreshGithubConfigForm();
+    renderGithubBackupStatus();
+  }
+};
+
+$('ghBackupNow').onclick = async () => {
+  const btn = $('ghBackupNow');
+  let cfg;
+  try {
+    cfg = await getGithubBackupConfig();
+  } catch (e) {
+    showGhBackupTip('读取本地配置失败：' + ((e && e.message) || e), false);
+    return;
+  }
+  if (!cfg.token || !cfg.owner || !cfg.repo) {
+    showGhBackupTip('请先保存 GitHub 备份配置', false);
+    return;
+  }
+  btn.disabled = true;
+  showGhBackupTip('正在拉取并全量备份，请勿关闭设置页…', true);
+  try {
+    // 手动按钮同样先 pullSync 成功再备份：没拉取过的浏览器本地视图不完整，
+    // 此刻做全量镜像会漏笔记（与 ensurePulled / createSnapshot 同款闸门）。
+    const s = await getSettings();
+    const st = await pullSync(s);
+    if (st === 'error') {
+      showGhBackupTip('七牛拉取失败，已暂停备份（本地视图可能不完整）', false);
+      return;
+    }
+    await chrome.storage.local.set({ lastPullAt: Date.now() });
+    await markGithubPullOk();
+    const r = await requestFullBackup('manual');
+    showGhBackupTip(r && r.ok
+      ? (r.reason || '全量备份完成')
+      : '备份失败：' + ((r && r.reason) || '未知原因'), !!(r && r.ok));
+  } catch (e) {
+    showGhBackupTip('备份失败：' + ((e && e.message) || e), false);
+  } finally {
+    btn.disabled = false;
+    renderGithubBackupStatus();
+  }
 };
